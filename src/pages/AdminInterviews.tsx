@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getInterviewSlotStats } from "../services/admin";
+import { getInterviewSlotStats, getAcceptedInterviews } from "../services/admin";
 import AdminLayout from "../components/AdminLayout";
 import "./AdminInterviews.redesign.css";
 
@@ -22,6 +22,33 @@ type Slot = {
   is_payment_done?: boolean;
 };
 
+type AcceptedInterview = {
+  interview_schedule_id: number;
+  meeting_link?: string;
+  date_time?: string;
+  candidate_first_name?: string;
+  candidate_last_name?: string;
+  interviewer_first_name?: string;
+  interviewer_last_name?: string;
+  interview_mode?: string;
+  interview_status?: string;
+};
+
+// Returns true if the interview starts within 1 hour from now
+function isUrgent(start_time_utc?: string): boolean {
+  if (!start_time_utc) return false;
+  const start = new Date(start_time_utc).getTime();
+  const now = Date.now();
+  const diffMs = start - now;
+  return diffMs > 0 && diffMs <= 60 * 60 * 1000;
+}
+
+// Returns true if the interview start time has already passed
+function isExpired(start_time_utc?: string): boolean {
+  if (!start_time_utc) return false;
+  return new Date(start_time_utc).getTime() < Date.now();
+}
+
 export default function AdminInterviews() {
   const [from, setFrom] = useState(() => {
     const d = new Date();
@@ -29,53 +56,56 @@ export default function AdminInterviews() {
     return d.toISOString().slice(0, 10);
   });
   const [to, setTo] = useState(() => new Date().toISOString().slice(0, 10));
-  const [mode, setMode] = useState<string>("");
   const [slots, setSlots] = useState<Slot[]>([]);
-  const [apiOnlineCount, setApiOnlineCount] = useState<number | null>(null);
-  const [apiOfflineCount, setApiOfflineCount] = useState<number | null>(null);
+  const [acceptedInterviews, setAcceptedInterviews] = useState<AcceptedInterview[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+  const [activeTab, setActiveTab] = useState<"open" | "accepted" | "cancelled">("open");
   const itemsPerPage = 6;
 
-  const normalizeMode = (m?: string) =>
-    (m || "").toString().trim().toLowerCase();
+  const allSlots = slots;
+  const confirmedInterviews = acceptedInterviews.filter((i) => i.interview_status?.toLowerCase() === "confirmed");
+  const cancelledInterviews = acceptedInterviews.filter((i) => i.interview_status?.toLowerCase() === "cancelled");
+  
+  const filteredSlots =
+    activeTab === "open"
+      ? allSlots.filter((s) => s.interview_status?.toLowerCase() === "open")
+      : activeTab === "accepted"
+      ? confirmedInterviews
+      : cancelledInterviews;
 
-  const computedOnlineCount = slots.filter(
-    (s) => normalizeMode(s.interview_mode) === "online"
-  ).length;
-
-  const computedOfflineCount = slots.filter(
-    (s) => normalizeMode(s.interview_mode) === "offline"
-  ).length;
-
-  const onlineCount = apiOnlineCount ?? computedOnlineCount;
-  const offlineCount = apiOfflineCount ?? computedOfflineCount;
-
-  const totalPages = Math.ceil(slots.length / itemsPerPage);
+  const totalPages = Math.ceil(filteredSlots.length / itemsPerPage);
   const startIdx = (currentPage - 1) * itemsPerPage;
-  const paginatedSlots = slots.slice(startIdx, startIdx + itemsPerPage);
+  const paginatedSlots = activeTab === "open"
+    ? (filteredSlots as Slot[]).slice(startIdx, startIdx + itemsPerPage)
+    : (filteredSlots as AcceptedInterview[]).slice(startIdx, startIdx + itemsPerPage);
 
-  const fetchSlots = async (opts?: { from?: string; to?: string; mode?: string }) => {
+  // ── Fetch Accepted Interviews ────────────────────────────────────────────
+  const fetchAcceptedInterviews = async () => {
     setLoading(true);
     setError(null);
     try {
-      const fromParam = opts?.from ?? from;
-      const toParam = opts?.to ?? to;
-      const modeParam = opts?.mode ?? mode;
+      const data = await getAcceptedInterviews();
+      const interviews = Array.isArray(data) ? data : data?.data || data || [];
+      setAcceptedInterviews(interviews);
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || "Failed to load accepted interviews");
+    } finally {
+      setLoading(false);
+    }
+  };
 
-      const data = await getInterviewSlotStats({
-        from: fromParam,
-        to: toParam,
-        mode: modeParam || undefined,
-      });
-
-      // rows may come directly or under .rows
+  // ── Fetch Slots ───────────────────────────────────────────────────────────
+  const fetchSlots = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await getInterviewSlotStats({ from, to });
       const rows = Array.isArray(data) ? data : data?.rows || [];
 
-      // Normalize candidate fields coming from API to the local Slot shape
       const normalized = (rows || []).map((r: any) => ({
         ...r,
         first_name:
@@ -84,47 +114,42 @@ export default function AdminInterviews() {
           r.last_name ?? r.candidate_last_name ?? r.candidate?.last_name ?? r.candidate?.lastName ?? null,
         email: r.email ?? r.candidate_email ?? r.candidate?.email ?? null,
         mobile_number:
-          r.mobile_number ?? r.candidate_mobile_number ?? r.candidate?.mobile_number ?? r.candidate?.phone ?? null,
-        resume_url: r.resume_url ?? r.candidate_resume_url ?? r.candidate?.resume_url ?? r.candidate?.resumeUrl ?? r.cv_url ?? null,
+          r.mobile_number ??
+          r.candidate_mobile_number ??
+          r.candidate?.mobile_number ??
+          r.candidate?.phone ??
+          null,
+        resume_url:
+          r.resume_url ??
+          r.candidate_resume_url ??
+          r.candidate?.resume_url ??
+          r.candidate?.resumeUrl ??
+          r.cv_url ??
+          null,
       }));
 
-      // Sort so the most recent slots appear first. Prefer start_time_utc, fallback to created_at.
       const safeTime = (obj: any) => {
         const t = obj?.start_time_utc ?? obj?.created_at ?? obj?.ts_range ?? null;
         const parsed = Date.parse(t || "");
         return Number.isNaN(parsed) ? 0 : parsed;
       };
-
       normalized.sort((a: any, b: any) => safeTime(b) - safeTime(a));
 
       setSlots(normalized || []);
-
-      // Try to parse counts from multiple possible keys returned by the API
-      const getNumber = (v: any) => (typeof v === "number" ? v : null);
-
-      const onlineCandidates = getNumber(data?.online_count) ?? getNumber(data?.onlineCount) ?? getNumber(data?.counts?.online) ?? getNumber(data?.stats?.online) ?? getNumber(data?.meta?.online) ?? null;
-      const offlineCandidates = getNumber(data?.offline_count) ?? getNumber(data?.offlineCount) ?? getNumber(data?.counts?.offline) ?? getNumber(data?.stats?.offline) ?? getNumber(data?.meta?.offline) ?? null;
-
-      setApiOnlineCount(onlineCandidates);
-      setApiOfflineCount(offlineCandidates);
     } catch (err: any) {
-      setError(
-        err?.response?.data?.message ||
-          err?.message ||
-          "Failed to load interview slots"
-      );
+      setError(err?.response?.data?.message || err?.message || "Failed to load interview slots");
     } finally {
       setLoading(false);
     }
   };
 
+  // ── Formatters ────────────────────────────────────────────────────────────
   const formatDateShort = (iso?: string) => {
     if (!iso) return "-";
     const d = new Date(iso);
-    const dd = String(d.getDate()).padStart(2, "0");
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    const yy = String(d.getFullYear()).slice(-2);
-    return `${dd}/${mm}/${yy}`;
+    return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(
+      d.getFullYear()
+    ).slice(-2)}`;
   };
 
   const formatTime = (iso?: string) => {
@@ -133,8 +158,7 @@ export default function AdminInterviews() {
     let h = d.getHours();
     const m = String(d.getMinutes()).padStart(2, "0");
     const ampm = h >= 12 ? "PM" : "AM";
-    h = h % 12;
-    if (h === 0) h = 12;
+    h = h % 12 || 12;
     return `${h}:${m} ${ampm}`;
   };
 
@@ -149,6 +173,7 @@ export default function AdminInterviews() {
     return `${total.toFixed(1)} years`;
   };
 
+  // ── Effects ───────────────────────────────────────────────────────────────
   useEffect(() => {
     const root = document.getElementById("root");
     if (root) root.classList.add("full-bleed");
@@ -159,114 +184,63 @@ export default function AdminInterviews() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Reset to page 1 when slots change (e.g., after filter)
   useEffect(() => {
-    if (currentPage > totalPages && totalPages > 0) {
-      setCurrentPage(1);
+    if (activeTab === "accepted") {
+      fetchAcceptedInterviews();
     }
-  }, [slots.length, totalPages, currentPage]);
+  }, [activeTab]);
 
+  useEffect(() => {
+    if (currentPage > totalPages && totalPages > 0) setCurrentPage(1);
+  }, [filteredSlots.length, totalPages, currentPage]);
+
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <AdminLayout
-      headerTitle="Interviews"
-      headerSubtitle="Filter by date and mode"
-    >
+    <AdminLayout headerTitle="Interviews" headerSubtitle="Manage interviews and interviewers">
       <section className="interviews-page">
-        {/* ================= FILTERS TOP ================= */}
-        <div className="filter-bar">
-              <div className="filter-fields">
-            <div>
-              <label className="field-label">From</label>
-              <input
-                type="date"
-                value={from}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setFrom(v);
-                  fetchSlots({ from: v });
-                }}
-                className="input"
-              />
-            </div>
 
-            <div>
-              <label className="field-label">To</label>
-              <input
-                type="date"
-                value={to}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setTo(v);
-                  fetchSlots({ to: v });
-                }}
-                min={from}
-                className="input"
-              />
-            </div>
-
-            <div>
-              <label className="field-label">Mode</label>
-              <select
-                value={mode}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setMode(v);
-                  // fetch immediately when mode changes using the new value
-                  fetchSlots({ mode: v });
-                }}
-                className="input"
-              >
-                <option value="">All</option>
-                <option value="online">Online</option>
-                <option value="offline">Offline</option>
-              </select>
-            </div>
-
-            <div className="filter-apply">
-              <button className="apply-btn" onClick={() => fetchSlots()}>
-                Apply
-              </button>
-            </div>
-          </div>
-
-          <div className="status-badges">
-            <div
-              className={`status-badge clickable ${mode === "online" ? "active" : ""}`}
-              onClick={() => {
-                const newMode = mode === "online" ? "" : "online";
-                setMode(newMode);
-                fetchSlots({ mode: newMode });
-              }}
-            >
-              <div className="status-dot online" />
-              <span className="status-label">Online</span>
-              <span className="status-count">{onlineCount}</span>
-            </div>
-
-            <div
-              className={`status-badge clickable ${mode === "offline" ? "active" : ""}`}
-              onClick={() => {
-                const newMode = mode === "offline" ? "" : "offline";
-                setMode(newMode);
-                fetchSlots({ mode: newMode });
-              }}
-            >
-              <div className="status-dot offline" />
-              <span className="status-label">Offline</span>
-              <span className="status-count">{offlineCount}</span>
-            </div>
-          </div>
+        {/* ── TABS ── */}
+        <div className="tabs-container">
+          <button
+            className={`tab-btn ${activeTab === "open" ? "active" : ""}`}
+            onClick={() => {
+              setActiveTab("open");
+              setCurrentPage(1);
+            }}
+          >
+            Interview Slots ({allSlots.filter((s) => s.interview_status?.toLowerCase() === "open").length})
+          </button>
+          <button
+            className={`tab-btn ${activeTab === "accepted" ? "active" : ""}`}
+            onClick={() => {
+              setActiveTab("accepted");
+              setCurrentPage(1);
+            }}
+          >
+            Accepted Interview Slots ({confirmedInterviews.length})
+          </button>
+          <button
+            className={`tab-btn ${activeTab === "cancelled" ? "active" : ""}`}
+            onClick={() => {
+              setActiveTab("cancelled");
+              setCurrentPage(1);
+            }}
+          >
+            Cancelled Interviews ({cancelledInterviews.length})
+          </button>
         </div>
 
-        {/* ================= TABLE ================= */}
+        {/* ══════════════════ INTERVIEW SLOTS ══════════════════ */}
         <div className="list-card slots-card">
-          <h4>Interview Slots</h4>
-
+          <h4>{activeTab === "open" ? "Interview Slots" : activeTab === "accepted" ? "Accepted Interviews" : "Cancelled Interviews"}</h4>
           {loading ? (
-            <div>Loading...</div>
+            <div className="state-message">Loading...</div>
           ) : error ? (
             <div className="error-text">{error}</div>
-          ) : (
+          ) : filteredSlots.length === 0 ? (
+            <div className="state-message">No {activeTab} interviews found.</div>
+          ) : activeTab === "open" ? (
+            /* OPEN SLOTS TABLE */
             <div className="table-wrapper">
               <table>
                 <thead>
@@ -277,88 +251,148 @@ export default function AdminInterviews() {
                     <th>Skills</th>
                     <th>Mode</th>
                     <th>Date</th>
+                    <th>Priority</th>
+                    <th>Status</th>
                     <th>Payment</th>
                     <th>Resume</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {paginatedSlots.map((s, idx) => (
-                    <tr
-                      key={s.interview_slot_id}
-                      className="slot-row"
-                      onClick={() => {
-                        setSelectedSlot(s);
-                        setShowModal(true);
-                      }}
-                    >
-                      <td className="sn-cell">{startIdx + idx + 1}</td>
-                      <td className="candidate-cell">
-                        {s.first_name || ""} {s.last_name || ""}
-                      </td>
-                      <td className="role-cell">
-                        <div className="role-title">{s.job_role}</div>
-                      </td>
-                      <td className="skills-cell">
-                        <div className="skills-row">
-                          {(s.skills || []).slice(0, 6).map((sk) => (
-                            <span key={sk} className="skill-badge">{sk}</span>
-                          ))}
-                        </div>
-                      </td>
-                      <td className="mode-cell capitalize">{s.interview_mode}</td>
-                      <td className="date-cell mono">{formatDateShort(s.start_time_utc)}</td>
-                      <td className="payment-cell">{s.is_payment_done ? "Paid" : "Unpaid"}</td>
-                      <td className="resume-cell">
-                        <button
-                          className="action-btn"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (s.resume_url) window.open(s.resume_url, "_blank");
-                          }}
-                        >
-                          View
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {(paginatedSlots as Slot[]).map((s, idx) => {
+                    const urgent = isUrgent(s.start_time_utc);
+                    const expired = isExpired(s.start_time_utc);
+                    return (
+                      <tr
+                        key={s.interview_slot_id}
+                        className={`slot-row ${expired ? "row-expired" : ""}`}
+                        onClick={() => {
+                          if (expired) return;
+                          setSelectedSlot(s);
+                          setShowModal(true);
+                        }}
+                      >
+                        <td className="sn-cell">{startIdx + idx + 1}</td>
+                        <td className="candidate-cell">
+                          {s.first_name || ""} {s.last_name || ""}
+                        </td>
+                        <td className="role-cell">
+                          <div className="role-title">{s.job_role}</div>
+                        </td>
+                        <td className="skills-cell">
+                          <div className="skills-row">
+                            {(s.skills || []).slice(0, 6).map((sk) => (
+                              <span key={sk} className="skill-badge">
+                                {sk}
+                              </span>
+                            ))}
+                          </div>
+                        </td>
+                        <td className="mode-cell capitalize">{s.interview_mode}</td>
+                        <td className="date-cell mono">{formatDateShort(s.start_time_utc)}</td>
+                        <td className="priority-cell">
+                          {expired ? (
+                            <span className="priority-badge urgent">🔴 Expired</span>
+                          ) : (
+                            <span className={`priority-badge ${urgent ? "urgent" : "normal"}`}>
+                              {urgent ? "🔴 Urgent" : "🟢 Normal"}
+                            </span>
+                          )}
+                        </td>
+                        <td className="expired-cell">
+                          <span className={`expired-badge ${expired ? "is-expired" : "is-active"}`}>
+                            {expired ? "Expired" : "Active"}
+                          </span>
+                        </td>
+                        <td className="payment-cell">{s.is_payment_done ? "Paid" : "Unpaid"}</td>
+                        <td className="resume-cell">
+                          <button
+                            className="action-btn"
+                            disabled={expired}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (!expired && s.resume_url) window.open(s.resume_url, "_blank");
+                            }}
+                          >
+                            View
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            /* ACCEPTED/CANCELLED INTERVIEWS TABLE */
+            <div className="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>S/N</th>
+                    <th>Candidate Name</th>
+                    <th>Interviewer</th>
+                    <th>Date & Time</th>
+                    <th>Meeting Link</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(paginatedSlots as AcceptedInterview[]).map((interview, idx) => {
+                    const isExpiredInterview = isExpired(interview.date_time);
+                    return (
+                      <tr key={interview.interview_schedule_id} className={`slot-row ${isExpiredInterview ? "row-expired" : ""}`}>
+                        <td className="sn-cell">{startIdx + idx + 1}</td>
+                        <td className="candidate-cell">
+                          {interview.candidate_first_name || ""} {interview.candidate_last_name || ""}
+                        </td>
+                        <td className="candidate-cell">
+                          {interview.interviewer_first_name || ""} {interview.interviewer_last_name || ""}
+                        </td>
+                        <td className="date-cell mono">
+                          {interview.date_time ? (
+                            <>
+                              <div>{formatDateShort(interview.date_time)}</div>
+                              <div style={{ fontSize: "12px", color: "#6b7280", marginTop: "4px" }}>
+                                {formatTime(interview.date_time)}
+                              </div>
+                            </>
+                          ) : (
+                            "-"
+                          )}
+                        </td>
+                        <td className="candidate-cell">
+                          {activeTab === "cancelled" ? (
+                            <span className="cancelled-badge">❌ Cancelled</span>
+                          ) : isExpiredInterview ? (
+                            <span className="expired-badge is-expired">Expired</span>
+                          ) : interview.meeting_link ? (
+                            <button
+                              className="action-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                window.open(interview.meeting_link, "_blank");
+                              }}
+                            >
+                              Join Meeting
+                            </button>
+                          ) : (
+                            "-"
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           )}
         </div>
 
-        {/* ================= PAGINATION ================= */}
+        {/* Slots Pagination */}
         {slots.length > 0 && totalPages > 1 && (
-          <div className="pagination-container">
-            <button
-              className="pagination-btn"
-              onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
-              disabled={currentPage === 1}
-            >
-              &lt;
-            </button>
-            {Array.from({ length: totalPages }, (_, i) => i + 1)
-              .slice(Math.max(0, currentPage - 2), Math.min(totalPages, currentPage + 1))
-              .map((page) => (
-                <button
-                  key={page}
-                  className={`pagination-btn ${currentPage === page ? "active" : ""}`}
-                  onClick={() => setCurrentPage(page)}
-                >
-                  {page}
-                </button>
-              ))}
-            <button
-              className="pagination-btn"
-              onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
-              disabled={currentPage === totalPages}
-            >
-              &gt;
-            </button>
-          </div>
+          <PaginationBar current={currentPage} total={totalPages} onChange={setCurrentPage} />
         )}
 
-        {/* ================= MODAL ================= */}
+        {/* Slot Detail Modal */}
         {showModal && selectedSlot && (
           <div className="modal-overlay" onClick={() => setShowModal(false)}>
             <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -369,25 +403,68 @@ export default function AdminInterviews() {
                 </button>
               </div>
               <div className="modal-body">
-                <p><strong>Code:</strong> {selectedSlot.interview_code}</p>
-                <p><strong>Name:</strong> {selectedSlot.first_name || ""} {selectedSlot.last_name || ""}</p>
-                <p><strong>Email:</strong> {selectedSlot.email || "-"}</p>
-                <p><strong>Mobile:</strong> {selectedSlot.mobile_number || "-"}</p>
-                <p><strong>Role:</strong> {selectedSlot.job_role}</p>
-                <p><strong>Mode:</strong> {selectedSlot.interview_mode}</p>
-                <p><strong>Experience:</strong> {formatExperience(selectedSlot.experience)}</p>
-                <p><strong>Start:</strong> {formatTime(selectedSlot.start_time_utc)}</p>
-                <p><strong>End:</strong> {formatTime(selectedSlot.end_time_utc)}</p>
-                <p><strong>Payment:</strong> {selectedSlot.is_payment_done ? "Paid" : "Unpaid"}</p>
-                <p><strong>Skills:</strong></p>
+                <p>
+                  <strong>Code:</strong> {selectedSlot.interview_code}
+                </p>
+                <p>
+                  <strong>Name:</strong> {selectedSlot.first_name || ""} {selectedSlot.last_name || ""}
+                </p>
+                <p>
+                  <strong>Email:</strong> {selectedSlot.email || "-"}
+                </p>
+                <p>
+                  <strong>Mobile:</strong> {selectedSlot.mobile_number || "-"}
+                </p>
+                <p>
+                  <strong>Role:</strong> {selectedSlot.job_role}
+                </p>
+                <p>
+                  <strong>Mode:</strong> {selectedSlot.interview_mode}
+                </p>
+                <p>
+                  <strong>Experience:</strong> {formatExperience(selectedSlot.experience)}
+                </p>
+                <p>
+                  <strong>Start:</strong> {formatTime(selectedSlot.start_time_utc)}
+                </p>
+                <p>
+                  <strong>End:</strong> {formatTime(selectedSlot.end_time_utc)}
+                </p>
+                <p>
+                  <strong>Priority:</strong>{" "}
+                  <span
+                    className={`priority-badge ${isUrgent(selectedSlot.start_time_utc) ? "urgent" : "normal"}`}
+                  >
+                    {isUrgent(selectedSlot.start_time_utc) ? "🔴 Urgent" : "🟢 Normal"}
+                  </span>
+                </p>
+                <p>
+                  <strong>Status:</strong>{" "}
+                  <span className={`expired-badge ${isExpired(selectedSlot.start_time_utc) ? "is-expired" : "is-active"}`}>
+                    {isExpired(selectedSlot.start_time_utc) ? "Expired" : "Active"}
+                  </span>
+                </p>
+                <p>
+                  <strong>Payment:</strong> {selectedSlot.is_payment_done ? "Paid" : "Unpaid"}
+                </p>
+                <p>
+                  <strong>Skills:</strong>
+                </p>
                 <div className="skills-row">
                   {(selectedSlot.skills || []).map((sk) => (
-                    <span key={sk} className="skill-badge">{sk}</span>
+                    <span key={sk} className="skill-badge">
+                      {sk}
+                    </span>
                   ))}
                 </div>
                 {selectedSlot.resume_url && (
                   <p style={{ marginTop: 12 }}>
-                    <button className="action-btn" onClick={() => window.open(selectedSlot.resume_url, "_blank")}>Open Resume</button>
+                    <button
+                      className="action-btn"
+                      onClick={() => window.open(selectedSlot.resume_url, "_blank")}
+                    >
+                      Open Resume
+                    </button>
                   </p>
                 )}
               </div>
@@ -395,6 +472,50 @@ export default function AdminInterviews() {
           </div>
         )}
       </section>
-    </AdminLayout>
+    </AdminLayout >
+  );
+}
+
+// ── Small Reusable Components ─────────────────────────────────────────────────
+
+function PaginationBar({
+  current,
+  total,
+  onChange,
+}: {
+  current: number;
+  total: number;
+  onChange: (p: number) => void;
+}) {
+  const pages = Array.from({ length: total }, (_, i) => i + 1).slice(
+    Math.max(0, current - 2),
+    Math.min(total, current + 1)
+  );
+  return (
+    <div className="pagination-container">
+      <button
+        className="pagination-btn"
+        onClick={() => onChange(Math.max(1, current - 1))}
+        disabled={current === 1}
+      >
+        &lt;
+      </button>
+      {pages.map((p) => (
+        <button
+          key={p}
+          className={`pagination-btn ${current === p ? "active" : ""}`}
+          onClick={() => onChange(p)}
+        >
+          {p}
+        </button>
+      ))}
+      <button
+        className="pagination-btn"
+        onClick={() => onChange(Math.min(total, current + 1))}
+        disabled={current === total}
+      >
+        &gt;
+      </button>
+    </div>
   );
 }

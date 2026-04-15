@@ -77,13 +77,31 @@ export async function loginAdmin(credentials: { email: string; password: string 
 export async function authLogin(credentials: { email: string; password: string }) {
   const payload = { ...credentials, type: "login" };
   console.log("[authLogin] login attempt ->", { email: credentials.email, type: payload.type });
-  const res = await api.post(`/auth`, payload);
+  const res = await api.post(`/auth/admin-login`, payload);
   const token = res?.data?.token || res?.data?.accessToken || res?.data?.jwt || res?.data?.data?.token;
   if (token) setAuthToken(token);
   return res.data;
 }
 
-export default { getInterviewers, getUsers, updateUser, confirmInterviewer, getResumes, setAuthToken, loginAdmin, authLogin, logout };
+// Get all users with bank details (interviewers)
+export async function getInterviewersWithBankDetails() {
+  const res = await api.get(`/admin/all-users-with-bank-details`);
+  return res.data;
+}
+
+// Mark an interviewer as verified
+export async function markInterviewerVerified(userId: number | string) {
+  const res = await api.put(`/admin/users/${userId}`, { is_verified: true });
+  return res.data;
+}
+
+// Get accepted interviews
+export async function getAcceptedInterviews() {
+  const res = await api.get(`/admin/accepted-interviews`);
+  return res.data;
+}
+
+
 
 // Pricing endpoints
 export async function getPricing() {
@@ -105,3 +123,4 @@ export async function deletePricing(id: number | string) {
   const res = await api.delete(`/admin/pricing/${id}`);
   return res.data;
 }
+export default { getInterviewers, getUsers, updateUser, confirmInterviewer, getResumes, setAuthToken, loginAdmin, authLogin, logout, getInterviewersWithBankDetails, markInterviewerVerified, getAcceptedInterviews };

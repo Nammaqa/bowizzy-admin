@@ -1,738 +1,580 @@
-import React, { useEffect, useState } from "react";
-import { getInterviewers, confirmInterviewer } from "../services/admin";
+import { useEffect, useState } from "react";
+import {
+  getInterviewersWithBankDetails,
+  markInterviewerVerified,
+  getUsers,
+} from "../services/admin";
 import AdminLayout from "../components/AdminLayout";
-import api from "../services/api";
+
+// Reuse the Users page CSS — same design system
 import "./AdminUsers.css";
 
-type ViewType = "interviewers" | "approved-interviewers" | "all-users";
+type Interviewer = {
+  bank_id?: number;
+  user_id: number;
+  bank_name?: string;
+  account_holder_name?: string;
+  account_number?: string;
+  ifsc_code?: string;
+  account_type?: string;
+  branch_name?: string;
+  document_url?: string;
+  first_name?: string;
+  last_name?: string;
+  email?: string;
+  is_verified?: boolean;
+  is_interviewer_verified?: string | boolean;
+  company_names?: string[];
+  institution_names?: string[];
+  user_type?: string;
+  personal_details?: {
+    first_name?: string;
+    last_name?: string;
+    email?: string;
+    mobile_number?: string;
+    profile_photo_url?: string;
+  };
+  skills?: Array<{ skill_name: string; skill_level: string }>;
+  education_details?: Array<{ institution_name: string; degree?: string; field_of_study?: string }>;
+  work_experience?: Array<{ company_name: string; job_title?: string }>;
+  job_roles?: Array<{ job_role: string }>;
+};
 
-const AdminUsers: React.FC = () => {
-  useEffect(() => {
-    const root = document.getElementById("root");
-    if (root) root.classList.add("full-bleed");
-    return () => {
-      if (root) root.classList.remove("full-bleed");
-    };
-  }, []);
+const ITEMS_PER_PAGE = 8;
 
-  const [activeView, setActiveView] = useState<ViewType>("interviewers");
-  const [pendingUsers, setPendingUsers] = useState<Array<any>>([]);
-  const [loadingPending, setLoadingPending] = useState(false);
-  const [pendingError, setPendingError] = useState<string | null>(null);
-  const [confirmingIds, setConfirmingIds] = useState<Array<number | string>>([]);
-  const [currentPage, setCurrentPage] = useState<Record<ViewType, number>>({
-    interviewers: 1,
-    "approved-interviewers": 1,
-    "all-users": 1,
-  });
-  const [selectedUser, setSelectedUser] = useState<any>(null);
-  const [showModal, setShowModal] = useState(false);
-  const [searchField, setSearchField] = useState<"name" | "email" | "role">("name");
-  const [searchQuery, setSearchQuery] = useState<string>("");
-  const [fromDate, setFromDate] = useState<string>("");
-  const [toDate, setToDate] = useState<string>("");
-  const [exportLoading, setExportLoading] = useState(false);
+export default function AdminInterviews() {
+  const [activeTab, setActiveTab] = useState<"pending" | "approved" | "all_users">("pending");
+  const [interviewers, setInterviewers] = useState<Interviewer[]>([]);
+  const [allUsers, setAllUsers] = useState<Interviewer[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [verifyingId, setVerifyingId] = useState<number | null>(null);
+  const [selectedInterviewer, setSelectedInterviewer] = useState<Interviewer | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
 
-  const ITEMS_PER_PAGE = 5;
-
-  // Sort data by earliest first (created_at or updated_at)
-  const sortedUsers = [...pendingUsers].sort((a, b) => {
-    const dateA = new Date(a.created_at || a.updated_at || 0).getTime();
-    const dateB = new Date(b.created_at || b.updated_at || 0).getTime();
-    return dateA - dateB;
-  });
-
-  // Filter users based on search field and query
-  const filteredUsers = sortedUsers.filter((user) => {
-    const query = searchQuery.toLowerCase().trim();
-    if (!query) return true;
-
-    try {
-      if (searchField === "name") {
-        const fullName = [
-          user.personal_details?.first_name || "",
-          user.personal_details?.middle_name || "",
-          user.personal_details?.last_name || "",
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase();
-        return fullName.includes(query);
-      } else if (searchField === "email") {
-        const email = (user.email || "").toLowerCase();
-        return email.includes(query);
-      } else if (searchField === "role") {
-        const role = user.job_roles && user.job_roles.length > 0
-          ? (user.job_roles[0].job_role || "").toLowerCase()
-          : "n/a";
-        return role.includes(query);
-      }
-    } catch (e) {
-      console.error("Search filter error:", e);
-    }
-    return true;
-  });
-
-  useEffect(() => {
-    let mounted = true;
-    setLoadingPending(true);
-    setPendingError(null);
-
-    const fetchData = async () => {
-      try {
-        let res;
-        if (activeView === "interviewers") {
-          res = await getInterviewers();
-          const isVerified = (u: any) => {
-            const v = u.is_interviewer_verified;
-            return v === true || v === "true" || v === "verified" || v === 1;
-          };
-          const pending = (res || []).filter((u: any) => {
-            if (u.is_interviewer_verified !== undefined && u.is_interviewer_verified !== null) {
-              return !isVerified(u);
-            }
-            return !u.is_verified;
-          });
-          if (mounted) setPendingUsers(pending);
-        } else if (activeView === "approved-interviewers") {
-          res = await api.get(`/admin/approved-interviewers`);
-          if (mounted) setPendingUsers(res.data || []);
-        } else if (activeView === "all-users") {
-          res = await api.get(`/admin/all-users`);
-          if (mounted) setPendingUsers(res.data || []);
-        }
-      } catch (err: any) {
-        if (mounted) {
-          setPendingError(
-            err?.response?.data?.message ||
-              err?.message ||
-              `Failed to load ${activeView}`
-          );
-        }
-      } finally {
-        if (mounted) setLoadingPending(false);
-      }
-    };
-
-    fetchData();
-
-    return () => {
-      mounted = false;
-    };
-  }, [activeView]);
-
-  const handleViewChange = (view: ViewType) => {
-    setActiveView(view);
-    setCurrentPage((prev) => ({ ...prev, [view]: 1 }));
-    setSearchQuery(""); // Reset search when changing view
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  const initials = (iv: Interviewer) => {
+    const firstName = iv.first_name ?? iv.personal_details?.first_name ?? "";
+    const lastName = iv.last_name ?? iv.personal_details?.last_name ?? "";
+    return `${firstName?.[0] ?? ""}${lastName?.[0] ?? ""}`.toUpperCase() || "?";
   };
 
-  const totalPages = filteredUsers.length > 0 ? Math.ceil(filteredUsers.length / ITEMS_PER_PAGE) : 1;
-  const startIndex = (currentPage[activeView] - 1) * ITEMS_PER_PAGE;
-  const endIndex = startIndex + ITEMS_PER_PAGE;
-  const paginatedUsers = filteredUsers.slice(startIndex, endIndex);
+  const fullName = (iv: Interviewer) => {
+    const firstName = iv.first_name ?? iv.personal_details?.first_name ?? "";
+    const lastName = iv.last_name ?? iv.personal_details?.last_name ?? "";
+    return [firstName, lastName].filter(Boolean).join(" ") || "—";
+  };
 
-  const getPageNumbers = () => {
-    const pages = [];
-    const maxVisible = 3;
-    let startPage = Math.max(1, currentPage[activeView] - 1);
-    let endPage = Math.min(totalPages, startPage + maxVisible - 1);
-
-    if (endPage - startPage + 1 < maxVisible) {
-      startPage = Math.max(1, endPage - maxVisible + 1);
+  const getIsVerified = (iv: Interviewer): boolean => {
+    if (iv.is_verified !== undefined) return iv.is_verified;
+    if (iv.is_interviewer_verified !== undefined) {
+      return iv.is_interviewer_verified === "true" || iv.is_interviewer_verified === true;
     }
+    return false;
+  };
 
-    for (let i = startPage; i <= endPage; i++) {
-      pages.push(i);
+  const getCompanies = (iv: Interviewer): string[] => {
+    if (iv.company_names && iv.company_names.length > 0) {
+      return iv.company_names;
     }
+    if (iv.work_experience && iv.work_experience.length > 0) {
+      return iv.work_experience.map((exp) => exp.company_name).filter(Boolean);
+    }
+    return [];
+  };
 
+  const getEducation = (iv: Interviewer): string[] => {
+    if (iv.institution_names && iv.institution_names.length > 0) {
+      return iv.institution_names;
+    }
+    if (iv.education_details && iv.education_details.length > 0) {
+      return iv.education_details.map((edu) => edu.institution_name).filter(Boolean);
+    }
+    return [];
+  };
+
+  // ── Derived lists ─────────────────────────────────────────────────────────
+  const pendingList = interviewers.filter((i) => !getIsVerified(i));
+  const approvedList = interviewers.filter((i) => getIsVerified(i));
+  const displayList = activeTab === "pending" ? pendingList : activeTab === "approved" ? approvedList : allUsers;
+
+  const totalPages = Math.ceil(displayList.length / ITEMS_PER_PAGE);
+  const startIdx = (currentPage - 1) * ITEMS_PER_PAGE;
+  const paginated = displayList.slice(startIdx, startIdx + ITEMS_PER_PAGE);
+
+  // ── Fetch ─────────────────────────────────────────────────────────────────
+  const fetchInterviewers = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await getInterviewersWithBankDetails();
+      const list: Interviewer[] = Array.isArray(data) ? data : data?.data || [];
+      setInterviewers(list);
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || "Failed to load interviewers");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchAllUsers = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await getUsers();
+      const list: Interviewer[] = Array.isArray(data) ? data : data?.data || [];
+      setAllUsers(list);
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || "Failed to load users");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ── Mark Verified ─────────────────────────────────────────────────────────
+  const handleMarkVerified = async (userId: number) => {
+    setVerifyingId(userId);
+    try {
+      await markInterviewerVerified(userId);
+      await fetchInterviewers();
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || "Failed to verify interviewer");
+    } finally {
+      setVerifyingId(null);
+    }
+  };
+
+  // ── Effects ───────────────────────────────────────────────────────────────
+  useEffect(() => {
+    fetchInterviewers();
+    fetchAllUsers();
+  }, []);
+
+  useEffect(() => {
+    setCurrentPage(1);
+    if (activeTab === "all_users") {
+      fetchAllUsers();
+    } else {
+      fetchInterviewers();
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (currentPage > totalPages && totalPages > 0) setCurrentPage(totalPages);
+  }, [totalPages, currentPage]);
+
+  // ── Additional Helpers ──────────────────────────────────────────────────────
+  const maskAccount = (num?: string) => {
+    if (!num) return "—";
+    return num.length > 4 ? `${"•".repeat(num.length - 4)}${num.slice(-4)}` : num;
+  };
+
+  const pageNumbers = () => {
+    if (totalPages <= 5) return Array.from({ length: totalPages }, (_, i) => i + 1);
+    const pages: (number | "…")[] = [1];
+    if (currentPage > 3) pages.push("…");
+    for (
+      let p = Math.max(2, currentPage - 1);
+      p <= Math.min(totalPages - 1, currentPage + 1);
+      p++
+    )
+      pages.push(p);
+    if (currentPage < totalPages - 2) pages.push("…");
+    pages.push(totalPages);
     return pages;
   };
 
-  const getLastEducation = (user: any) => {
-    if (!user.education_details || user.education_details.length === 0) {
-      return null;
-    }
-    const sortedEdu = [...user.education_details].sort((a, b) => {
-      const dateA = new Date(a.end_year || 0).getTime();
-      const dateB = new Date(b.end_year || 0).getTime();
-      return dateB - dateA;
-    });
-    return sortedEdu[0];
-  };
-
-  const getJobRole = (user: any) => {
-    if (user.job_roles && user.job_roles.length > 0) {
-      return user.job_roles[0].job_role;
-    }
-    return "N/A";
-  };
-
-  const getTotalExperience = (user: any) => {
-    if (!user.work_experience || user.work_experience.length === 0) {
-      return "Fresher";
-    }
-
-    let totalMonths = 0;
-    user.work_experience.forEach((exp: any) => {
-      const startDate = new Date(exp.start_date);
-      const endDate = exp.currently_working_here ? new Date() : new Date(exp.end_date);
-      const months = (endDate.getFullYear() - startDate.getFullYear()) * 12 + (endDate.getMonth() - startDate.getMonth());
-      totalMonths += Math.max(0, months);
-    });
-
-    const years = Math.floor(totalMonths / 12);
-    const months = totalMonths % 12;
-
-    if (years === 0) {
-      return `${months} month${months !== 1 ? "s" : ""}`;
-    } else if (months === 0) {
-      return `${years} year${years !== 1 ? "s" : ""}`;
-    } else {
-      return `${years} year${years !== 1 ? "s" : ""} ${months} month${months !== 1 ? "s" : ""}`;
-    }
-  };
-
-  const openModal = (user: any) => {
-    setSelectedUser(user);
-    setShowModal(true);
-  };
-
-  const closeModal = () => {
-    setShowModal(false);
-    setSelectedUser(null);
-  };
-
-  const handleExportUsers = async () => {
-    setExportLoading(true);
-    try {
-      const params: any = {};
-      if (fromDate) params.from_date = fromDate;
-      if (toDate) params.to_date = toDate;
-
-      const response = await api.get(`/admin/export-users`, {
-        params,
-        responseType: "blob",
-      });
-
-      // Create a blob URL and trigger download
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute(
-        "download",
-        `users-export-${new Date().toISOString().split("T")[0]}.xlsx`
-      );
-      document.body.appendChild(link);
-      link.click();
-      link.parentNode?.removeChild(link);
-      window.URL.revokeObjectURL(url);
-    } catch (err: any) {
-      console.error("Export error:", err);
-      alert(
-        err?.response?.data?.message ||
-          err?.message ||
-          "Failed to export users"
-      );
-    } finally {
-      setExportLoading(false);
-    }
-  };
-
-  const getViewTitle = () => {
-    switch (activeView) {
-      case "approved-interviewers":
-        return "Approved Interviewers";
-      case "all-users":
-        return "All Users";
-      default:
-        return "Pending Interviewers";
-    }
-  };
-
   return (
-    <AdminLayout
-      headerTitle="Users Management"
-      headerSubtitle="Review and approve interviewer requests"
-    >
+    <AdminLayout headerTitle="Users and Interviewers" headerSubtitle="Manage and verify interviewers and users">
       <div className="users-root">
-        {/* VIEW BUTTONS */}
+
+        {/* ── STATS ── */}
+        <div className="stats-grid">
+          <div className="stat-card">
+            <div className="stat-title">Total Interviewers</div>
+            <div className="stat-value" style={{ color: "#1f2937" }}>{interviewers.length}</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-title">Pending Verification</div>
+            <div className="stat-value" style={{ color: "#c2410c" }}>{pendingList.length}</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-title">Approved</div>
+            <div className="stat-value" style={{ color: "#047857" }}>{approvedList.length}</div>
+          </div>
+        </div>
+
+        {/* ── TABS ── */}
         <div className="view-buttons-container">
-          <button
-            className={`view-btn ${activeView === "interviewers" ? "active" : ""}`}
-            onClick={() => handleViewChange("interviewers")}
-          >
-            Pending Interviewers
-          </button>
-          <div className="button-spacer"></div>
-          <button
-            className={`view-btn ${activeView === "approved-interviewers" ? "active" : ""}`}
-            onClick={() => handleViewChange("approved-interviewers")}
-          >
-            Approved Interviewers
-          </button>
-          <div className="button-spacer"></div>
-          <button
-            className={`view-btn ${activeView === "all-users" ? "active" : ""}`}
-            onClick={() => handleViewChange("all-users")}
-          >
-            All Users
-          </button>
-        </div>
-
-        {/* SEARCH SECTION */}
-        <div className="search-container">
-          <div className="search-field-group">
-            <label htmlFor="search-field">Search By:</label>
-            <select
-              id="search-field"
-              className="search-field-dropdown"
-              value={searchField}
-              onChange={(e) => setSearchField(e.target.value as "name" | "email" | "role")}
+          <div style={{ display: "flex", gap: 0 }}>
+            <button
+              className={`view-btn ${activeTab === "pending" ? "active" : ""}`}
+              style={{ borderRadius: "8px 0 0 8px", borderRight: "none" }}
+              onClick={() => setActiveTab("pending")}
             >
-              <option value="name">Name</option>
-              <option value="email">Email</option>
-              <option value="role">Role</option>
-            </select>
-          </div>
-          <div className="search-input-group">
-            <input
-              type="text"
-              className="search-input"
-              placeholder={`Search by ${searchField}...`}
-              value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value);
-                setCurrentPage((prev) => ({ ...prev, [activeView]: 1 }));
-              }}
-            />
-            {searchQuery && (
-              <button
-                className="search-clear-btn"
-                onClick={() => setSearchQuery("")}
-                title="Clear search"
-              >
-                ✕
-              </button>
-            )}
+              Pending ({pendingList.length})
+            </button>
+            <button
+              className={`view-btn ${activeTab === "approved" ? "active" : ""}`}
+              style={{ borderRight: "none" }}
+              onClick={() => setActiveTab("approved")}
+            >
+              Approved ({approvedList.length})
+            </button>
+            <button
+              className={`view-btn ${activeTab === "all_users" ? "active" : ""}`}
+              style={{ borderRadius: "0 8px 8px 0" }}
+              onClick={() => setActiveTab("all_users")}
+            >
+              All Users ({allUsers.length})
+            </button>
           </div>
         </div>
 
-        {/* EXPORT SECTION - Only visible for All Users */}
-        {activeView === "all-users" && (
-          <div className="export-container">
-            <div className="export-form">
-              <div className="date-input-group">
-                <label htmlFor="from-date">From Date:</label>
-                <input
-                  id="from-date"
-                  type="date"
-                  className="date-input"
-                  value={fromDate}
-                  onChange={(e) => setFromDate(e.target.value)}
-                />
-              </div>
-              <div className="date-input-group">
-                <label htmlFor="to-date">To Date:</label>
-                <input
-                  id="to-date"
-                  type="date"
-                  className="date-input"
-                  value={toDate}
-                  onChange={(e) => setToDate(e.target.value)}
-                />
-              </div>
-              <button
-                className="btn primary export-btn"
-                onClick={handleExportUsers}
-                disabled={exportLoading}
-              >
-                {exportLoading ? "Exporting…" : "Export as Excel"}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* LIST */}
+        {/* ── TABLE CARD ── */}
         <div className="card">
           <div className="card-header">
-            <h3>{getViewTitle()}</h3>
+            <h3>
+              {activeTab === "pending"
+                ? "Pending Interviewers"
+                : activeTab === "approved"
+                ? "Approved Interviewers"
+                : "All Users"}
+            </h3>
             <div className="card-count">
-              <span className="count-dot"></span>
-              <span className="count-label">
-                {searchQuery
-                  ? "Search Results"
-                  : activeView === "interviewers"
-                  ? "Pending Requests"
-                  : activeView === "approved-interviewers"
-                  ? "Approved"
-                  : "Total"}
-              </span>
-              <span className="count-value">{filteredUsers.length}</span>
+              <span
+                className="count-dot"
+                style={{
+                  background:
+                    activeTab === "pending"
+                      ? "#c2410c"
+                      : activeTab === "approved"
+                      ? "#10b981"
+                      : "#3b82f6",
+                }}
+              />
+              <span className="count-label">Showing</span>
+              <span className="count-value">{displayList.length}</span>
             </div>
           </div>
 
           <div className="table-wrapper">
-            <table>
-              <thead>
-                <tr>
-                  {activeView === "interviewers" || activeView === "approved-interviewers" || activeView === "all-users" ? (
-                    <>
-                      <th>S/N</th>
-                      <th>Name</th>
-                      <th>Email</th>
-                      <th>Role</th>
-                      <th>Education</th>
-                      <th>Experience</th>
-                      <th className="action-col">
-                        {activeView === "interviewers" ? "Action" : activeView === "approved-interviewers" ? "Status" : "Interviewer"}
-                      </th>
-                    </>
-                  ) : null}
-                </tr>
-              </thead>
-              <tbody>
-                {loadingPending && (
+            {loading ? (
+              <div className="table-state">Loading…</div>
+            ) : error ? (
+              <div className="table-error">{error}</div>
+            ) : displayList.length === 0 ? (
+              <div className="table-state">
+                No{" "}
+                {activeTab === "all_users"
+                  ? "users"
+                  : activeTab === "pending"
+                  ? "pending interviewers"
+                  : "approved interviewers"}{" "}
+                found.
+              </div>
+            ) : (
+              <table>
+                <thead>
                   <tr>
-                    <td colSpan={activeView === "interviewers" || activeView === "approved-interviewers" || activeView === "all-users" ? 7 : 4} className="table-state">
-                      Loading users…
-                    </td>
+                    <th className="serial-col">#</th>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Role</th>
+                    <th>Companies</th>
+                    <th>Education</th>
+                    <th>User Type</th>
+                    <th className="action-col">Action</th>
                   </tr>
-                )}
+                </thead>
+                <tbody>
+                  {paginated.map((iv, idx) => (
+                    <tr
+                      key={iv.user_id}
+                      className="clickable-row"
+                      onClick={() => setSelectedInterviewer(iv)}
+                    >
+                      <td className="serial-col">{startIdx + idx + 1}</td>
 
-                {pendingError && (
-                  <tr>
-                    <td colSpan={activeView === "interviewers" || activeView === "approved-interviewers" || activeView === "all-users" ? 7 : 4} className="table-error">
-                      {pendingError}
-                    </td>
-                  </tr>
-                )}
+                      <td>
+                        <div className="user-cell">
+                          <div
+                            className="avatar"
+                            style={{ background: "#fff7ed", color: "#ff7a2b", fontSize: 13 }}
+                          >
+                            {initials(iv)}
+                          </div>
+                          <div>
+                            <div className="user-name">{fullName(iv)}</div>
+                          </div>
+                        </div>
+                      </td>
 
-                {!loadingPending &&
-                  !pendingError &&
-                  filteredUsers.length === 0 && (
-                  <tr>
-                    <td colSpan={activeView === "interviewers" || activeView === "approved-interviewers" || activeView === "all-users" ? 7 : 4} className="table-state">
-                      {searchQuery ? `No results found for "${searchQuery}"` : "No users found"}
-                    </td>
-                  </tr>
-                )}
+                      <td className="mono" style={{ fontSize: 13 }}>{iv.email ?? "—"}</td>
+                      <td>
+                        {activeTab === "all_users" && getIsVerified(iv)
+                          ? "Interviewer"
+                          : iv.user_type ?? "—"}
+                      </td>
 
-                {!loadingPending &&
-                  !pendingError &&
-                  paginatedUsers.map((u, index) => {
-                    const id = u.user_id || u.email;
-                    const isVerified = (u: any) => {
-                      const v = u.is_interviewer_verified;
-                      return v === true || v === "true" || v === "verified" || v === 1;
-                    };
-                    const isPending = activeView === "interviewers";
-                    const isApproved = activeView === "approved-interviewers";
-                    const isAllUsers = activeView === "all-users";
-                    const lastEducation = getLastEducation(u);
+                      <td>
+                        <NamePills
+                          items={getCompanies(iv)}
+                          max={2}
+                          color="#f0fdf4"
+                          textColor="#047857"
+                        />
+                      </td>
 
-                    if (isPending || isApproved || isAllUsers) {
-                      return (
-                        <tr key={id} onClick={() => openModal(u)} className="clickable-row">
-                          <td className="serial-col">{startIndex + index + 1}</td>
-                          <td>
-                            <div className="user-name-only">
-                              {[u.personal_details?.first_name, u.personal_details?.middle_name, u.personal_details?.last_name]
-                                .filter(Boolean)
-                                .join(" ") || "—"}
-                            </div>
-                          </td>
-                          <td className="mono">{u.email}</td>
-                          <td>{getJobRole(u)}</td>
-                          <td>
-                            {lastEducation?.field_of_study || "N/A"}
-                          </td>
-                          <td>
-                            {getTotalExperience(u)}
-                          </td>
-                          <td className="action-col">
-                            {isPending ? (
-                              <button
-                                className="btn primary"
-                                disabled={confirmingIds.includes(id)}
-                                onClick={async (e) => {
-                                  e.stopPropagation();
-                                  setConfirmingIds((p) => [...p, id]);
-                                  try {
-                                    await confirmInterviewer(u.user_id);
-                                    setPendingUsers((prev) =>
-                                      prev.filter(
-                                        (p) => (p.user_id || p.email) !== id
-                                      )
-                                    );
-                                  } catch (err: any) {
-                                    setPendingError(
-                                      err?.response?.data?.message ||
-                                        err?.message ||
-                                        "Failed to confirm user"
-                                    );
-                                  } finally {
-                                    setConfirmingIds((p) =>
-                                      p.filter((x) => x !== id)
-                                    );
-                                  }
-                                }}
-                              >
-                                {confirmingIds.includes(id) ? "Confirming…" : "Approve"}
-                              </button>
-                            ) : isApproved ? (
-                              <span className="badge success">Approved</span>
-                            ) : (
-                              <span className={`badge ${isVerified(u) ? "success" : "pending"}`}>
-                                {isVerified(u) ? "Yes" : "No"}
-                              </span>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    } else {
-                      return null;
-                    }
-                  })}
-              </tbody>
-            </table>
+                      <td>
+                        <NamePills
+                          items={getEducation(iv)}
+                          max={2}
+                          color="#eff6ff"
+                          textColor="#1d4ed8"
+                        />
+                      </td>
+
+                      <td>
+                        <span
+                          className="badge"
+                          style={{
+                            background: getIsVerified(iv) ? "#d1fae5" : "#fef3c7",
+                            color: getIsVerified(iv) ? "#047857" : "#b45309",
+                            fontSize: 12,
+                            fontWeight: 500,
+                            padding: "4px 8px",
+                            borderRadius: 4,
+                          }}
+                        >
+                          {getIsVerified(iv) ? "Interviewer" : "Candidate"}
+                        </span>
+                      </td>
+
+                      <td className="action-col" onClick={(e) => e.stopPropagation()}>
+                        {activeTab === "all_users" ? (
+                          <span style={{ color: "#9ca3af" }}>—</span>
+                        ) : activeTab === "pending" ? (
+                          <button
+                            className="btn primary"
+                            disabled={verifyingId === iv.user_id}
+                            onClick={() => handleMarkVerified(iv.user_id)}
+                          >
+                            {verifyingId === iv.user_id ? "Saving…" : "Verify"}
+                          </button>
+                        ) : (
+                          <span className="badge success">{getIsVerified(iv) ? "Verified" : "Pending"}</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
 
-          {/* PAGINATION */}
-          {!loadingPending && !pendingError && totalPages > 1 && (
+          {/* ── PAGINATION ── */}
+          {totalPages > 1 && (
             <div className="pagination-container">
               <button
                 className="pagination-btn"
-                disabled={currentPage[activeView] === 1}
-                onClick={() =>
-                  setCurrentPage((prev) => ({
-                    ...prev,
-                    [activeView]: Math.max(1, prev[activeView] - 1),
-                  }))
-                }
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
               >
-                &lt;
+                ‹
               </button>
-
               <div className="pagination-numbers">
-                {getPageNumbers().map((page) => (
-                  <button
-                    key={page}
-                    className={`page-number ${
-                      currentPage[activeView] === page ? "active" : ""
-                    }`}
-                    onClick={() =>
-                      setCurrentPage((prev) => ({ ...prev, [activeView]: page }))
-                    }
-                  >
-                    {page}
-                  </button>
-                ))}
-                {totalPages > (getPageNumbers()[getPageNumbers().length - 1] || 0) && (
-                  <span className="pagination-dots">...</span>
+                {pageNumbers().map((p, i) =>
+                  p === "…" ? (
+                    <span key={`dots-${i}`} className="pagination-dots">…</span>
+                  ) : (
+                    <button
+                      key={p}
+                      className={`page-number ${currentPage === p ? "active" : ""}`}
+                      onClick={() => setCurrentPage(p as number)}
+                    >
+                      {p}
+                    </button>
+                  )
                 )}
               </div>
-
               <button
                 className="pagination-btn"
-                disabled={currentPage[activeView] === totalPages}
-                onClick={() =>
-                  setCurrentPage((prev) => ({
-                    ...prev,
-                    [activeView]: Math.min(totalPages, prev[activeView] + 1),
-                  }))
-                }
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={currentPage === totalPages}
               >
-                &gt;
+                ›
               </button>
             </div>
           )}
         </div>
       </div>
 
-      {/* MODAL */}
-      {showModal && selectedUser && (
-        <div className="modal-overlay" onClick={closeModal}>
+      {/* ══ DETAIL MODAL ══ */}
+      {selectedInterviewer && (
+        <div className="modal-overlay" onClick={() => setSelectedInterviewer(null)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Interviewer Details</h2>
-              <button className="modal-close" onClick={closeModal}>
-                ✕
+              <h2>{fullName(selectedInterviewer)}</h2>
+              <button className="modal-close" onClick={() => setSelectedInterviewer(null)}>
+                ×
               </button>
             </div>
 
             <div className="modal-body">
-              {/* Personal Details */}
+              {/* Personal Info */}
               <div className="modal-section">
-                <h3>Personal Details</h3>
+                <h3>Personal Info</h3>
                 <div className="details-grid">
                   <div className="detail-item">
-                    <label>Name:</label>
+                    <label>Full Name</label>
+                    <span>{fullName(selectedInterviewer)}</span>
+                  </div>
+                  <div className="detail-item">
+                    <label>Email</label>
+                    <span className="mono">{selectedInterviewer.email ?? "—"}</span>
+                  </div>
+                  <div className="detail-item">
+                    <label>Role</label>
+                    <span>{selectedInterviewer.user_type ?? "—"}</span>
+                  </div>
+                  <div className="detail-item">
+                    <label>Status</label>
                     <span>
-                      {[selectedUser.personal_details?.first_name, selectedUser.personal_details?.middle_name, selectedUser.personal_details?.last_name]
-                        .filter(Boolean)
-                        .join(" ") || "—"}
-                    </span>
-                  </div>
-                  <div className="detail-item">
-                    <label>Email:</label>
-                    <span>{selectedUser.email}</span>
-                  </div>
-                  <div className="detail-item">
-                    <label>Mobile:</label>
-                    <span>{selectedUser.personal_details?.mobile_number || "N/A"}</span>
-                  </div>
-                  <div className="detail-item">
-                    <label>Gender:</label>
-                    <span>{selectedUser.personal_details?.gender || "N/A"}</span>
-                  </div>
-                  <div className="detail-item">
-                    <label>Date of Birth:</label>
-                    <span>
-                      {selectedUser.personal_details?.date_of_birth
-                        ? new Date(selectedUser.personal_details.date_of_birth).toLocaleDateString()
-                        : "N/A"}
-                    </span>
-                  </div>
-                  <div className="detail-item">
-                    <label>Location:</label>
-                    <span>
-                      {[selectedUser.personal_details?.city, selectedUser.personal_details?.state, selectedUser.personal_details?.country]
-                        .filter(Boolean)
-                        .join(", ") || "N/A"}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Job Role */}
-              <div className="modal-section">
-                <h3>Role</h3>
-                <div className="detail-item">
-                  <span className="role-badge">{getJobRole(selectedUser)}</span>
-                </div>
-              </div>
-
-              {/* Education */}
-              <div className="modal-section">
-                <h3>Education</h3>
-                {selectedUser.education_details && selectedUser.education_details.length > 0 ? (
-                  <div className="education-list">
-                    {selectedUser.education_details.map((edu: any, idx: number) => (
-                      <div key={idx} className="education-item">
-                        <div className="edu-header">
-                          <span className="edu-type">{edu.education_type?.toUpperCase()}</span>
-                          <span className="edu-year">{edu.end_year ? new Date(edu.end_year).getFullYear() : "—"}</span>
-                        </div>
-                        <div className="edu-details">
-                          <p>
-                            <strong>Institution:</strong> {edu.institution_name || "N/A"}
-                          </p>
-                          {edu.education_type?.toLowerCase() === "higher" && edu.field_of_study && (
-                            <p className="field-highlight">
-                              <strong>Field:</strong> {edu.field_of_study}
-                            </p>
-                          )}
-                          {edu.degree && (
-                            <p>
-                              <strong>Degree:</strong> {edu.degree}
-                            </p>
-                          )}
-                          {edu.field_of_study && edu.education_type?.toLowerCase() !== "higher" && (
-                            <p>
-                              <strong>Field:</strong> {edu.field_of_study}
-                            </p>
-                          )}
-                          <p>
-                            <strong>Result:</strong> {edu.result} ({edu.result_format})
-                          </p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p>No education details found</p>
-                )}
-              </div>
-
-              {/* Skills */}
-              <div className="modal-section">
-                <h3>Skills</h3>
-                {selectedUser.skills && selectedUser.skills.length > 0 ? (
-                  <div className="skills-list">
-                    {selectedUser.skills.map((skill: any, idx: number) => (
-                      <span key={idx} className="skill-tag">
-                        {skill.skill_name || skill.name}
+                      <span
+                        className={`badge ${getIsVerified(selectedInterviewer) ? "success" : "pending"}`}
+                      >
+                        {getIsVerified(selectedInterviewer) ? "Verified" : "Pending"}
                       </span>
-                    ))}
+                    </span>
                   </div>
-                ) : (
-                  <p>No skills listed</p>
-                )}
+                </div>
+              </div>
+
+              {/* Bank Details */}
+              <div className="modal-section">
+                <h3>Bank Details</h3>
+                <div className="bank-list">
+                  <div className="bank-item">
+                    <div className="bank-header">
+                      <h4>{selectedInterviewer.bank_name ?? "—"}</h4>
+                      {selectedInterviewer.account_type && (
+                        <span className="account-type">{selectedInterviewer.account_type}</span>
+                      )}
+                    </div>
+                    <div className="bank-details">
+                      <p>
+                        <strong>Account Holder:</strong>{" "}
+                        {selectedInterviewer.account_holder_name ?? "—"}
+                      </p>
+                      <p>
+                        <strong>Account Number:</strong>{" "}
+                        <span className="account-masked">
+                          {maskAccount(selectedInterviewer.account_number)}
+                        </span>
+                      </p>
+                      <p>
+                        <strong>IFSC Code:</strong>{" "}
+                        <span className="mono">{selectedInterviewer.ifsc_code ?? "—"}</span>
+                      </p>
+                      <p>
+                        <strong>Branch:</strong> {selectedInterviewer.branch_name ?? "—"}
+                      </p>
+                    </div>
+                    {selectedInterviewer.document_url && (
+                      <button
+                        className="btn primary"
+                        style={{ marginTop: 12 }}
+                        onClick={() =>
+                          window.open(selectedInterviewer.document_url, "_blank")
+                        }
+                      >
+                        View Document
+                      </button>
+                    )}
+                  </div>
+                </div>
               </div>
 
               {/* Work Experience */}
-              {selectedUser.work_experience && selectedUser.work_experience.length > 0 && (
+              {getCompanies(selectedInterviewer).length > 0 && (
                 <div className="modal-section">
                   <h3>Work Experience</h3>
                   <div className="experience-list">
-                    {selectedUser.work_experience.map((exp: any, idx: number) => (
-                      <div key={idx} className="experience-item">
-                        <div className="exp-header">
-                          <h4>{exp.job_title}</h4>
-                          <span className="exp-company">{exp.company_name}</span>
+                    {selectedInterviewer.work_experience && selectedInterviewer.work_experience.length > 0 ? (
+                      selectedInterviewer.work_experience.map((exp, i) => (
+                        <div key={i} className="experience-item">
+                          <div className="exp-header">
+                            <h4>{exp.company_name}</h4>
+                            {exp.job_title && <span style={{ fontSize: 12, color: "#666" }}>{exp.job_title}</span>}
+                          </div>
                         </div>
-                        <div className="exp-details">
-                          <p>
-                            <strong>Type:</strong> {exp.employment_type} | <strong>Mode:</strong> {exp.work_mode}
-                          </p>
-                          <p>
-                            <strong>Location:</strong> {exp.location}
-                          </p>
-                          <p>
-                            <strong>Duration:</strong> {new Date(exp.start_date).getFullYear()} - {exp.currently_working_here ? "Present" : new Date(exp.end_date).getFullYear()}
-                          </p>
+                      ))
+                    ) : (
+                      getCompanies(selectedInterviewer).map((company, i) => (
+                        <div key={i} className="experience-item">
+                          <div className="exp-header">
+                            <h4>{company}</h4>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      ))
+                    )}
                   </div>
                 </div>
               )}
 
-              {/* Bank Details */}
-              {selectedUser.bank_details && selectedUser.bank_details.length > 0 && (
+              {/* Education */}
+              {getEducation(selectedInterviewer).length > 0 && (
                 <div className="modal-section">
-                  <h3>Bank Details</h3>
-                  <div className="bank-list">
-                    {selectedUser.bank_details.map((bank: any, idx: number) => (
-                      <div key={idx} className="bank-item">
-                        <div className="bank-header">
-                          <h4>{bank.bank_name}</h4>
-                          <span className="account-type">{bank.account_type}</span>
+                  <h3>Education</h3>
+                  <div className="education-list">
+                    {selectedInterviewer.education_details && selectedInterviewer.education_details.length > 0 ? (
+                      selectedInterviewer.education_details.map((edu, i) => (
+                        <div key={i} className="education-item">
+                          <div className="edu-header">
+                            <span className="edu-type">{edu.degree || "Education"}</span>
+                          </div>
+                          <div className="edu-details">
+                            <p><strong>{edu.institution_name}</strong></p>
+                            {edu.field_of_study && <p style={{ fontSize: 12, color: "#666" }}>{edu.field_of_study}</p>}
+                          </div>
                         </div>
-                        <div className="bank-details">
-                          <p>
-                            <strong>Account Holder:</strong> {bank.account_holder_name}
-                          </p>
-                          <p>
-                            <strong>Account Number:</strong> <span className="account-masked">{bank.account_number}</span>
-                          </p>
-                          <p>
-                            <strong>IFSC Code:</strong> {bank.ifsc_code}
-                          </p>
-                          <p>
-                            <strong>Branch:</strong> {bank.branch_name}
-                          </p>
+                      ))
+                    ) : (
+                      getEducation(selectedInterviewer).map((inst, i) => (
+                        <div key={i} className="education-item">
+                          <div className="edu-header">
+                            <span className="edu-type">Institution</span>
+                          </div>
+                          <div className="edu-details">
+                            <p>{inst}</p>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      ))
+                    )}
                   </div>
                 </div>
               )}
             </div>
 
             <div className="modal-footer">
-              <button className="btn primary" onClick={closeModal}>
+              {!getIsVerified(selectedInterviewer) && (
+                <button
+                  className="btn primary"
+                  disabled={verifyingId === selectedInterviewer.user_id}
+                  onClick={async () => {
+                    await handleMarkVerified(selectedInterviewer.user_id);
+                    setSelectedInterviewer(null);
+                  }}
+                >
+                  {verifyingId === selectedInterviewer.user_id ? "Saving…" : "Mark as Verified"}
+                </button>
+              )}
+              <button
+                className="btn"
+                style={{ background: "#f3f4f6", color: "#374151" }}
+                onClick={() => setSelectedInterviewer(null)}
+              >
                 Close
               </button>
             </div>
@@ -741,6 +583,44 @@ const AdminUsers: React.FC = () => {
       )}
     </AdminLayout>
   );
-};
+}
 
-export default AdminUsers;
+// ── Pill list helper ───────────────────────────────────────────────────────
+function NamePills({
+  items,
+  max,
+  color,
+  textColor,
+}: {
+  items?: string[];
+  max: number;
+  color: string;
+  textColor: string;
+}) {
+  if (!items || items.length === 0)
+    return <span style={{ color: "#9ca3af" }}>—</span>;
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+      {items.slice(0, max).map((item, i) => (
+        <span
+          key={i}
+          style={{
+            background: color,
+            color: textColor,
+            fontSize: 12,
+            fontWeight: 500,
+            padding: "3px 8px",
+            borderRadius: 999,
+          }}
+        >
+          {item}
+        </span>
+      ))}
+      {items.length > max && (
+        <span style={{ fontSize: 12, color: "#9ca3af", alignSelf: "center" }}>
+          +{items.length - max}
+        </span>
+      )}
+    </div>
+  );
+}
