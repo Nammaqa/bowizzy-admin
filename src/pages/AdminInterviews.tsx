@@ -50,12 +50,12 @@ function isExpired(start_time_utc?: string): boolean {
 }
 
 export default function AdminInterviews() {
-  const [from, setFrom] = useState(() => {
+  const [from] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() - 30);
     return d.toISOString().slice(0, 10);
   });
-  const [to, setTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const [to] = useState(() => new Date().toISOString().slice(0, 10));
   const [slots, setSlots] = useState<Slot[]>([]);
   const [acceptedInterviews, setAcceptedInterviews] = useState<AcceptedInterview[]>([]);
   const [loading, setLoading] = useState(false);
