@@ -26,6 +26,7 @@ type AcceptedInterview = {
   interview_schedule_id: number;
   meeting_link?: string;
   date_time?: string;
+  end_time_utc?: string;
   candidate_first_name?: string;
   candidate_last_name?: string;
   interviewer_first_name?: string;
@@ -44,18 +45,18 @@ function isUrgent(start_time_utc?: string): boolean {
 }
 
 // Returns true if the interview start time has already passed
-function isExpired(start_time_utc?: string): boolean {
-  if (!start_time_utc) return false;
-  return new Date(start_time_utc).getTime() < Date.now();
+function isExpired(end_time_utc?: string): boolean {
+  if (!end_time_utc) return false;
+  return new Date(end_time_utc).getTime() < Date.now();
 }
 
 export default function AdminInterviews() {
-  const [from] = useState(() => {
-    const d = new Date();
+  const [from, setFrom] = useState(() => {
+  const d = new Date();
     d.setDate(d.getDate() - 30);
     return d.toISOString().slice(0, 10);
   });
-  const [to] = useState(() => new Date().toISOString().slice(0, 10));
+  const [to, setTo] = useState(() => new Date().toISOString().slice(0, 10));
   const [slots, setSlots] = useState<Slot[]>([]);
   const [acceptedInterviews, setAcceptedInterviews] = useState<AcceptedInterview[]>([]);
   const [loading, setLoading] = useState(false);
@@ -69,13 +70,13 @@ export default function AdminInterviews() {
   const allSlots = slots;
   const confirmedInterviews = acceptedInterviews.filter((i) => i.interview_status?.toLowerCase() === "confirmed");
   const cancelledInterviews = acceptedInterviews.filter((i) => i.interview_status?.toLowerCase() === "cancelled");
-  
+
   const filteredSlots =
     activeTab === "open"
       ? allSlots.filter((s) => s.interview_status?.toLowerCase() === "open")
       : activeTab === "accepted"
-      ? confirmedInterviews
-      : cancelledInterviews;
+        ? confirmedInterviews
+        : cancelledInterviews;
 
   const totalPages = Math.ceil(filteredSlots.length / itemsPerPage);
   const startIdx = (currentPage - 1) * itemsPerPage;
@@ -194,6 +195,11 @@ export default function AdminInterviews() {
     if (currentPage > totalPages && totalPages > 0) setCurrentPage(1);
   }, [filteredSlots.length, totalPages, currentPage]);
 
+  useEffect(() => {
+    setCurrentPage(1);
+    fetchSlots();
+  }, [from, to]);
+
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <AdminLayout headerTitle="Interviews" headerSubtitle="Manage interviews and interviewers">
@@ -229,6 +235,43 @@ export default function AdminInterviews() {
             Cancelled Interviews ({cancelledInterviews.length})
           </button>
         </div>
+
+        {/* ── DATE FILTER (only for open slots) ── */}
+        {activeTab === "open" && (
+          <div style={{ background: "#ffffff", padding: "16px 20px", borderRadius: "10px", border: "1px solid #e0e0e0", display: "flex", gap: "16px", alignItems: "flex-end", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+              <label style={{ fontSize: "13px", fontWeight: "600", color: "#374151" }}>From Date</label>
+              <input
+                type="date"
+                value={from}
+                onChange={(e) => setFrom(e.target.value)}
+                style={{ padding: "8px 12px", border: "1px solid #d1d5db", borderRadius: "8px", fontSize: "14px", fontFamily: "inherit", cursor: "pointer" }}
+              />
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+              <label style={{ fontSize: "13px", fontWeight: "600", color: "#374151" }}>To Date</label>
+              <input
+                type="date"
+                value={to}
+                onChange={(e) => setTo(e.target.value)}
+                style={{ padding: "8px 12px", border: "1px solid #d1d5db", borderRadius: "8px", fontSize: "14px", fontFamily: "inherit", cursor: "pointer" }}
+              />
+            </div>
+            <button
+              onClick={() => {
+                const d = new Date();
+                d.setDate(d.getDate() - 30);
+                setFrom(d.toISOString().slice(0, 10));
+                setTo(new Date().toISOString().slice(0, 10));
+              }}
+              style={{ padding: "10px 16px", background: "#f3f4f6", border: "1px solid #d1d5db", borderRadius: "8px", fontSize: "13px", fontWeight: "600", cursor: "pointer", color: "#374151", transition: "all 0.2s ease" }}
+              onMouseOver={(e) => { e.currentTarget.style.background = "#e5e7eb"; }}
+              onMouseOut={(e) => { e.currentTarget.style.background = "#f3f4f6"; }}
+            >
+              Reset (Last 30 days)
+            </button>
+          </div>
+        )}
 
         {/* ══════════════════ INTERVIEW SLOTS ══════════════════ */}
         <div className="list-card slots-card">
@@ -337,7 +380,7 @@ export default function AdminInterviews() {
                 </thead>
                 <tbody>
                   {(paginatedSlots as AcceptedInterview[]).map((interview, idx) => {
-                    const isExpiredInterview = isExpired(interview.date_time);
+                    const isExpiredInterview = isExpired(interview.end_time_utc);
                     return (
                       <tr key={interview.interview_schedule_id} className={`slot-row ${isExpiredInterview ? "row-expired" : ""}`}>
                         <td className="sn-cell">{startIdx + idx + 1}</td>
@@ -365,15 +408,15 @@ export default function AdminInterviews() {
                           ) : isExpiredInterview ? (
                             <span className="expired-badge is-expired">Expired</span>
                           ) : interview.meeting_link ? (
-                            <button
-                              className="action-btn"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                window.open(interview.meeting_link, "_blank");
-                              }}
+                            <a
+                              href={interview.meeting_link}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="link-btn"
+                              onClick={(e) => e.stopPropagation()}
                             >
                               Join Meeting
-                            </button>
+                            </a>
                           ) : (
                             "-"
                           )}

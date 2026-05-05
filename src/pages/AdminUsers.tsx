@@ -27,6 +27,7 @@ type Interviewer = {
   company_names?: string[];
   institution_names?: string[];
   user_type?: string;
+  bank_details?: any[];
   personal_details?: {
     first_name?: string;
     last_name?: string;
@@ -43,7 +44,7 @@ type Interviewer = {
 const ITEMS_PER_PAGE = 8;
 
 export default function AdminInterviews() {
-  const [activeTab, setActiveTab] = useState<"pending" | "approved" | "all_users">("pending");
+  const [activeTab, setActiveTab] = useState<"pending interviewers" | "approved interviewers" | "all_users">("pending interviewers");
   const [interviewers, setInterviewers] = useState<Interviewer[]>([]);
   const [allUsers, setAllUsers] = useState<Interviewer[]>([]);
   const [loading, setLoading] = useState(false);
@@ -51,6 +52,8 @@ export default function AdminInterviews() {
   const [verifyingId, setVerifyingId] = useState<number | null>(null);
   const [selectedInterviewer, setSelectedInterviewer] = useState<Interviewer | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchField, setSearchField] = useState<"name" | "email">("name");
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   const initials = (iv: Interviewer) => {
@@ -67,9 +70,6 @@ export default function AdminInterviews() {
 
   const getIsVerified = (iv: Interviewer): boolean => {
     if (iv.is_verified !== undefined) return iv.is_verified;
-    if (iv.is_interviewer_verified !== undefined) {
-      return iv.is_interviewer_verified === "true" || iv.is_interviewer_verified === true;
-    }
     return false;
   };
 
@@ -96,8 +96,20 @@ export default function AdminInterviews() {
   // ── Derived lists ─────────────────────────────────────────────────────────
   const pendingList = interviewers.filter((i) => !getIsVerified(i));
   const approvedList = interviewers.filter((i) => getIsVerified(i));
-  const displayList = activeTab === "pending" ? pendingList : activeTab === "approved" ? approvedList : allUsers;
+  const baseList = activeTab === "pending interviewers" ? pendingList : activeTab === "approved interviewers" ? approvedList : allUsers;
 
+  // Filter by search query
+  const filteredList = baseList.filter((item) => {
+    if (!searchQuery.trim()) return true;
+    const query = searchQuery.toLowerCase();
+    if (searchField === "name") {
+      return fullName(item).toLowerCase().includes(query);
+    } else {
+      return (item.email ?? "").toLowerCase().includes(query);
+    }
+  });
+
+  const displayList = filteredList;
   const totalPages = Math.ceil(displayList.length / ITEMS_PER_PAGE);
   const startIdx = (currentPage - 1) * ITEMS_PER_PAGE;
   const paginated = displayList.slice(startIdx, startIdx + ITEMS_PER_PAGE);
@@ -133,6 +145,11 @@ export default function AdminInterviews() {
 
   // ── Mark Verified ─────────────────────────────────────────────────────────
   const handleMarkVerified = async (userId: number) => {
+    const confirmed = window.confirm(
+      "Do you want to accept this user as an interviewer?"
+    );
+    if (!confirmed) return;
+
     setVerifyingId(userId);
     try {
       await markInterviewerVerified(userId);
@@ -152,6 +169,7 @@ export default function AdminInterviews() {
 
   useEffect(() => {
     setCurrentPage(1);
+    setSearchQuery("");
     if (activeTab === "all_users") {
       fetchAllUsers();
     } else {
@@ -163,11 +181,6 @@ export default function AdminInterviews() {
     if (currentPage > totalPages && totalPages > 0) setCurrentPage(totalPages);
   }, [totalPages, currentPage]);
 
-  // ── Additional Helpers ──────────────────────────────────────────────────────
-  const maskAccount = (num?: string) => {
-    if (!num) return "—";
-    return num.length > 4 ? `${"•".repeat(num.length - 4)}${num.slice(-4)}` : num;
-  };
 
   const pageNumbers = () => {
     if (totalPages <= 5) return Array.from({ length: totalPages }, (_, i) => i + 1);
@@ -206,24 +219,21 @@ export default function AdminInterviews() {
 
         {/* ── TABS ── */}
         <div className="view-buttons-container">
-          <div style={{ display: "flex", gap: 0 }}>
+          <div style={{ display: "flex", gap: 8 }}>
             <button
-              className={`view-btn ${activeTab === "pending" ? "active" : ""}`}
-              style={{ borderRadius: "8px 0 0 8px", borderRight: "none" }}
-              onClick={() => setActiveTab("pending")}
+              className={`view-btn ${activeTab === "pending interviewers" ? "active" : ""}`}
+              onClick={() => setActiveTab("pending interviewers")}
             >
-              Pending ({pendingList.length})
+              Pending Interviewers ({pendingList.length})
             </button>
             <button
-              className={`view-btn ${activeTab === "approved" ? "active" : ""}`}
-              style={{ borderRight: "none" }}
-              onClick={() => setActiveTab("approved")}
+              className={`view-btn ${activeTab === "approved interviewers" ? "active" : ""}`}
+              onClick={() => setActiveTab("approved interviewers")}
             >
-              Approved ({approvedList.length})
+              Approved Interviewers ({approvedList.length})
             </button>
             <button
               className={`view-btn ${activeTab === "all_users" ? "active" : ""}`}
-              style={{ borderRadius: "0 8px 8px 0" }}
               onClick={() => setActiveTab("all_users")}
             >
               All Users ({allUsers.length})
@@ -231,13 +241,54 @@ export default function AdminInterviews() {
           </div>
         </div>
 
+        {/* ── SEARCH FILTER ── */}
+        <div className="search-container">
+          <div className="search-field-group">
+            <label>Search By</label>
+            <select
+              className="search-field-dropdown"
+              value={searchField}
+              onChange={(e) => {
+                setSearchField(e.target.value as "name" | "email");
+                setCurrentPage(1);
+              }}
+            >
+              <option value="name">Name</option>
+              <option value="email">Email</option>
+            </select>
+          </div>
+          <div className="search-input-group">
+            <input
+              type="text"
+              className="search-input"
+              placeholder={`Search by ${searchField}...`}
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setCurrentPage(1);
+              }}
+            />
+            {searchQuery && (
+              <button
+                className="search-clear-btn"
+                onClick={() => {
+                  setSearchQuery("");
+                  setCurrentPage(1);
+                }}
+              >
+                ✕
+              </button>
+            )}
+          </div>
+        </div>
+
         {/* ── TABLE CARD ── */}
         <div className="card">
           <div className="card-header">
             <h3>
-              {activeTab === "pending"
+              {activeTab === "pending interviewers"
                 ? "Pending Interviewers"
-                : activeTab === "approved"
+                : activeTab === "approved interviewers"
                 ? "Approved Interviewers"
                 : "All Users"}
             </h3>
@@ -246,15 +297,15 @@ export default function AdminInterviews() {
                 className="count-dot"
                 style={{
                   background:
-                    activeTab === "pending"
+                    activeTab === "pending interviewers"
                       ? "#c2410c"
-                      : activeTab === "approved"
+                      : activeTab === "approved interviewers"
                       ? "#10b981"
                       : "#3b82f6",
                 }}
               />
               <span className="count-label">Showing</span>
-              <span className="count-value">{displayList.length}</span>
+              <span className="count-value">{paginated.length}</span>
             </div>
           </div>
 
@@ -265,13 +316,21 @@ export default function AdminInterviews() {
               <div className="table-error">{error}</div>
             ) : displayList.length === 0 ? (
               <div className="table-state">
-                No{" "}
-                {activeTab === "all_users"
-                  ? "users"
-                  : activeTab === "pending"
-                  ? "pending interviewers"
-                  : "approved interviewers"}{" "}
-                found.
+                {searchQuery ? (
+                  <>
+                    No results found for "{searchQuery}" in {searchField}.
+                  </>
+                ) : (
+                  <>
+                    No{" "}
+                    {activeTab === "all_users"
+                      ? "users"
+                      : activeTab === "pending interviewers"
+                      ? "pending interviewers"
+                      : "approved interviewers"}{" "}
+                    found.
+                  </>
+                )}
               </div>
             ) : (
               <table>
@@ -312,7 +371,7 @@ export default function AdminInterviews() {
 
                       <td className="mono" style={{ fontSize: 13 }}>{iv.email ?? "—"}</td>
                       <td>
-                        {activeTab === "all_users" && getIsVerified(iv)
+                        {activeTab === "all_users" && (iv.bank_details?.length ?? 0) > 0
                           ? "Interviewer"
                           : iv.user_type ?? "—"}
                       </td>
@@ -339,22 +398,22 @@ export default function AdminInterviews() {
                         <span
                           className="badge"
                           style={{
-                            background: getIsVerified(iv) ? "#d1fae5" : "#fef3c7",
-                            color: getIsVerified(iv) ? "#047857" : "#b45309",
+                            background: (activeTab === "all_users" && (iv.bank_details?.length ?? 0) > 0) || getIsVerified(iv) ? "#d1fae5" : "#fef3c7",
+                            color: (activeTab === "all_users" && (iv.bank_details?.length ?? 0) > 0) || getIsVerified(iv) ? "#047857" : "#b45309",
                             fontSize: 12,
                             fontWeight: 500,
                             padding: "4px 8px",
                             borderRadius: 4,
                           }}
                         >
-                          {getIsVerified(iv) ? "Interviewer" : "Candidate"}
+                          {(activeTab === "all_users" && (iv.bank_details?.length ?? 0) > 0) || getIsVerified(iv) ? "Interviewer" : "Candidate"}
                         </span>
                       </td>
 
                       <td className="action-col" onClick={(e) => e.stopPropagation()}>
                         {activeTab === "all_users" ? (
                           <span style={{ color: "#9ca3af" }}>—</span>
-                        ) : activeTab === "pending" ? (
+                        ) : activeTab === "pending interviewers" ? (
                           <button
                             className="btn primary"
                             disabled={verifyingId === iv.user_id}
@@ -436,7 +495,11 @@ export default function AdminInterviews() {
                   </div>
                   <div className="detail-item">
                     <label>Role</label>
-                    <span>{selectedInterviewer.user_type ?? "—"}</span>
+                    <span>
+                      {(selectedInterviewer.bank_details?.length ?? 0) > 0 
+                        ? "Interviewer" 
+                        : selectedInterviewer.user_type ?? "—"}
+                    </span>
                   </div>
                   <div className="detail-item">
                     <label>Status</label>
@@ -452,49 +515,53 @@ export default function AdminInterviews() {
               </div>
 
               {/* Bank Details */}
-              <div className="modal-section">
-                <h3>Bank Details</h3>
-                <div className="bank-list">
-                  <div className="bank-item">
-                    <div className="bank-header">
-                      <h4>{selectedInterviewer.bank_name ?? "—"}</h4>
-                      {selectedInterviewer.account_type && (
-                        <span className="account-type">{selectedInterviewer.account_type}</span>
-                      )}
-                    </div>
-                    <div className="bank-details">
-                      <p>
-                        <strong>Account Holder:</strong>{" "}
-                        {selectedInterviewer.account_holder_name ?? "—"}
-                      </p>
-                      <p>
-                        <strong>Account Number:</strong>{" "}
-                        <span className="account-masked">
-                          {maskAccount(selectedInterviewer.account_number)}
-                        </span>
-                      </p>
-                      <p>
-                        <strong>IFSC Code:</strong>{" "}
-                        <span className="mono">{selectedInterviewer.ifsc_code ?? "—"}</span>
-                      </p>
-                      <p>
-                        <strong>Branch:</strong> {selectedInterviewer.branch_name ?? "—"}
-                      </p>
-                    </div>
-                    {selectedInterviewer.document_url && (
-                      <button
-                        className="btn primary"
-                        style={{ marginTop: 12 }}
-                        onClick={() =>
-                          window.open(selectedInterviewer.document_url, "_blank")
-                        }
-                      >
-                        View Document
-                      </button>
-                    )}
+              {(selectedInterviewer.bank_details?.length ?? 0) > 0 && (
+                <div className="modal-section">
+                  <h3>Bank Details</h3>
+                  <div className="bank-list">
+                    {selectedInterviewer.bank_details?.map((bank, i) => (
+                      <div key={i} className="bank-item">
+                        <div className="bank-header">
+                          <h4>{bank.bank_name ?? "—"}</h4>
+                          {bank.account_type && (
+                            <span className="account-type">{bank.account_type}</span>
+                          )}
+                        </div>
+                        <div className="bank-details">
+                          <p>
+                            <strong>Account Holder:</strong>{" "}
+                            {bank.account_holder_name ?? "—"}
+                          </p>
+                          <p>
+                            <strong>Account Number:</strong>{" "}
+                            <span className="account-masked">
+                              {bank.account_number}
+                            </span>
+                          </p>
+                          <p>
+                            <strong>IFSC Code:</strong>{" "}
+                            <span className="mono">{bank.ifsc_code ?? "—"}</span>
+                          </p>
+                          <p>
+                            <strong>Branch:</strong> {bank.branch_name ?? "—"}
+                          </p>
+                        </div>
+                        {bank.document_url && (
+                          <button
+                            className="btn primary"
+                            style={{ marginTop: 12 }}
+                            onClick={() =>
+                              window.open(bank.document_url, "_blank")
+                            }
+                          >
+                            View Document
+                          </button>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 </div>
-              </div>
+              )}
 
               {/* Work Experience */}
               {getCompanies(selectedInterviewer).length > 0 && (
