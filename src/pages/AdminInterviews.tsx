@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { getPriorityInterviews, getAllInterviews } from "../services/admin";
 import AdminLayout from "../components/AdminLayout";
 import "./AdminInterviews.redesign.css";
