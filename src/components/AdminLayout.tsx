@@ -62,7 +62,7 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({
                 }
               >
                 <span className="nav-icon">📹</span>
-                <span>Interviews</span>
+                <span>Mock Interview</span>
               </NavLink>
               {/* <NavLink
                 to="/admin/resumes"

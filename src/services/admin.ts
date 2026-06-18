@@ -83,21 +83,35 @@ export async function authLogin(credentials: { email: string; password: string }
   return res.data;
 }
 
-// Get all users with bank details (interviewers)
-export async function getInterviewersWithBankDetails() {
-  const res = await api.get(`/admin/all-users-with-bank-details`);
+
+
+// Get pending interviewers
+export async function getPendingInterviewers() {
+  const res = await api.get(`/admin/interviewers/pending`);
   return res.data;
 }
 
 // Mark an interviewer as verified
 export async function markInterviewerVerified(userId: number | string) {
-  const res = await api.put(`/admin/users/${userId}`, { is_verified: true });
+  const res = await api.put(`/admin/users/${userId}`, { is_verified: true,is_interviewer_verified: true });
   return res.data;
 }
 
 // Get accepted interviews
 export async function getAcceptedInterviews() {
   const res = await api.get(`/admin/accepted-interviews`);
+  return res.data;
+}
+
+// Get priority interviews
+export async function getPriorityInterviews() {
+  const res = await api.get(`/admin/priority-interviews`);
+  return res.data;
+}
+
+// Get all interviews
+export async function getAllInterviews() {
+  const res = await api.get(`/admin/interviews`);
   return res.data;
 }
 
@@ -123,4 +137,4 @@ export async function deletePricing(id: number | string) {
   const res = await api.delete(`/admin/pricing/${id}`);
   return res.data;
 }
-export default { getInterviewers, getUsers, updateUser, confirmInterviewer, getResumes, setAuthToken, loginAdmin, authLogin, logout, getInterviewersWithBankDetails, markInterviewerVerified, getAcceptedInterviews };
+export default { getInterviewers, getUsers, updateUser, confirmInterviewer, getResumes, setAuthToken, loginAdmin, authLogin, logout, getPendingInterviewers, markInterviewerVerified, getAcceptedInterviews, getPriorityInterviews, getAllInterviews };
