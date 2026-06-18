@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import {
-  getInterviewersWithBankDetails,
+  getPendingInterviewers,
   markInterviewerVerified,
   getUsers,
 } from "../services/admin";
@@ -44,8 +44,8 @@ type Interviewer = {
 const ITEMS_PER_PAGE = 8;
 
 export default function AdminInterviews() {
-  const [activeTab, setActiveTab] = useState<"pending interviewers" | "approved interviewers" | "all_users">("pending interviewers");
-  const [interviewers, setInterviewers] = useState<Interviewer[]>([]);
+  const [activeTab, setActiveTab] = useState<"pending interviewers" | "all_users">("pending interviewers");
+  const [pendingInterviewers, setPendingInterviewers] = useState<Interviewer[]>([]);
   const [allUsers, setAllUsers] = useState<Interviewer[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -94,9 +94,8 @@ export default function AdminInterviews() {
   };
 
   // ── Derived lists ─────────────────────────────────────────────────────────
-  const pendingList = interviewers.filter((i) => !getIsVerified(i));
-  const approvedList = interviewers.filter((i) => getIsVerified(i));
-  const baseList = activeTab === "pending interviewers" ? pendingList : activeTab === "approved interviewers" ? approvedList : allUsers;
+  const pendingList = pendingInterviewers;
+  const baseList = activeTab === "pending interviewers" ? pendingList : allUsers;
 
   // Filter by search query
   const filteredList = baseList.filter((item) => {
@@ -119,9 +118,9 @@ export default function AdminInterviews() {
     setLoading(true);
     setError(null);
     try {
-      const data = await getInterviewersWithBankDetails();
-      const list: Interviewer[] = Array.isArray(data) ? data : data?.data || [];
-      setInterviewers(list);
+      const pendingData = await getPendingInterviewers();
+      const pList: Interviewer[] = Array.isArray(pendingData) ? pendingData : pendingData?.data || [];
+      setPendingInterviewers(pList);
     } catch (err: any) {
       setError(err?.response?.data?.message || err?.message || "Failed to load interviewers");
     } finally {
@@ -204,16 +203,12 @@ export default function AdminInterviews() {
         {/* ── STATS ── */}
         <div className="stats-grid">
           <div className="stat-card">
-            <div className="stat-title">Total Interviewers</div>
-            <div className="stat-value" style={{ color: "#1f2937" }}>{interviewers.length}</div>
+            <div className="stat-title">Total Users</div>
+            <div className="stat-value" style={{ color: "#1f2937" }}>{allUsers.length}</div>
           </div>
           <div className="stat-card">
             <div className="stat-title">Pending Verification</div>
             <div className="stat-value" style={{ color: "#c2410c" }}>{pendingList.length}</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-title">Approved</div>
-            <div className="stat-value" style={{ color: "#047857" }}>{approvedList.length}</div>
           </div>
         </div>
 
@@ -225,12 +220,6 @@ export default function AdminInterviews() {
               onClick={() => setActiveTab("pending interviewers")}
             >
               Pending Interviewers ({pendingList.length})
-            </button>
-            <button
-              className={`view-btn ${activeTab === "approved interviewers" ? "active" : ""}`}
-              onClick={() => setActiveTab("approved interviewers")}
-            >
-              Approved Interviewers ({approvedList.length})
             </button>
             <button
               className={`view-btn ${activeTab === "all_users" ? "active" : ""}`}
@@ -288,8 +277,6 @@ export default function AdminInterviews() {
             <h3>
               {activeTab === "pending interviewers"
                 ? "Pending Interviewers"
-                : activeTab === "approved interviewers"
-                ? "Approved Interviewers"
                 : "All Users"}
             </h3>
             <div className="card-count">
@@ -299,8 +286,6 @@ export default function AdminInterviews() {
                   background:
                     activeTab === "pending interviewers"
                       ? "#c2410c"
-                      : activeTab === "approved interviewers"
-                      ? "#10b981"
                       : "#3b82f6",
                 }}
               />
@@ -325,9 +310,7 @@ export default function AdminInterviews() {
                     No{" "}
                     {activeTab === "all_users"
                       ? "users"
-                      : activeTab === "pending interviewers"
-                      ? "pending interviewers"
-                      : "approved interviewers"}{" "}
+                      : "pending interviewers"}{" "}
                     found.
                   </>
                 )}
@@ -398,15 +381,15 @@ export default function AdminInterviews() {
                         <span
                           className="badge"
                           style={{
-                            background: (activeTab === "all_users" && (iv.bank_details?.length ?? 0) > 0) || getIsVerified(iv) ? "#d1fae5" : "#fef3c7",
-                            color: (activeTab === "all_users" && (iv.bank_details?.length ?? 0) > 0) || getIsVerified(iv) ? "#047857" : "#b45309",
+                            background: activeTab === "pending interviewers" || (activeTab === "all_users" && (iv.bank_details?.length ?? 0) > 0) || getIsVerified(iv) ? "#d1fae5" : "#fef3c7",
+                            color: activeTab === "pending interviewers" || (activeTab === "all_users" && (iv.bank_details?.length ?? 0) > 0) || getIsVerified(iv) ? "#047857" : "#b45309",
                             fontSize: 12,
                             fontWeight: 500,
                             padding: "4px 8px",
                             borderRadius: 4,
                           }}
                         >
-                          {(activeTab === "all_users" && (iv.bank_details?.length ?? 0) > 0) || getIsVerified(iv) ? "Interviewer" : "Candidate"}
+                          {activeTab === "pending interviewers" || (activeTab === "all_users" && (iv.bank_details?.length ?? 0) > 0) || getIsVerified(iv) ? "Interviewer" : "Candidate"}
                         </span>
                       </td>
 
@@ -511,6 +494,18 @@ export default function AdminInterviews() {
                       </span>
                     </span>
                   </div>
+                  {(selectedInterviewer as any).created_at && (
+                    <div className="detail-item">
+                      <label>Created At</label>
+                      <span>{new Date((selectedInterviewer as any).created_at).toLocaleDateString()}</span>
+                    </div>
+                  )}
+                  {(selectedInterviewer as any).updated_at && (
+                    <div className="detail-item">
+                      <label>Updated At</label>
+                      <span>{new Date((selectedInterviewer as any).updated_at).toLocaleDateString()}</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -619,6 +614,34 @@ export default function AdminInterviews() {
                         </div>
                       ))
                     )}
+                  </div>
+                </div>
+              )}
+
+              {/* Skills */}
+              {selectedInterviewer.skills && selectedInterviewer.skills.length > 0 && (
+                <div className="modal-section">
+                  <h3>Skills</h3>
+                  <div className="skills-list" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {selectedInterviewer.skills.map((skill, i) => (
+                      <span key={i} className="badge" style={{ background: "#f3f4f6", color: "#374151" }}>
+                        {skill.skill_name} {skill.skill_level && `(${skill.skill_level})`}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Job Roles */}
+              {selectedInterviewer.job_roles && selectedInterviewer.job_roles.length > 0 && (
+                <div className="modal-section" style={{ marginTop: 16 }}>
+                  <h3>Job Roles</h3>
+                  <div className="roles-list" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {selectedInterviewer.job_roles.map((role, i) => (
+                      <span key={i} className="badge" style={{ background: "#e0e7ff", color: "#4338ca" }}>
+                        {role.job_role}
+                      </span>
+                    ))}
                   </div>
                 </div>
               )}
