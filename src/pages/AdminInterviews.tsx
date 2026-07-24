@@ -97,6 +97,10 @@ export default function AdminInterviews() {
 
   // ── Status badge ───────────────────────────────────────────────────────────
   const renderStatusBadge = (item: MockInterview) => {
+    if (item.interviewer_id === null) {
+      return <span className="status-badge status-pending">Pending</span>;
+    }
+
     const expired = isExpired(item.end_time_utc);
     const s = item.interview_status.toLowerCase();
 
