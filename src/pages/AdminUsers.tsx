@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   getPendingInterviewers,
   markInterviewerVerified,
+  banInterviewer,
   getUsers,
 } from "../services/admin";
 import AdminLayout from "../components/AdminLayout";
@@ -24,6 +25,8 @@ type Interviewer = {
   email?: string;
   is_verified?: boolean;
   is_interviewer_verified?: string | boolean;
+  is_banned?: string | boolean;
+  is_interviewer_banned?: string | boolean;
   company_names?: string[];
   institution_names?: string[];
   user_type?: string;
@@ -44,13 +47,18 @@ type Interviewer = {
 const ITEMS_PER_PAGE = 8;
 
 export default function AdminInterviews() {
-  const [activeTab, setActiveTab] = useState<"pending interviewers" | "all_users">("pending interviewers");
+  const [activeTab, setActiveTab] = useState<"pending interviewers" | "all_users" | "interviewers">("pending interviewers");
   const [pendingInterviewers, setPendingInterviewers] = useState<Interviewer[]>([]);
   const [allUsers, setAllUsers] = useState<Interviewer[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [verifyingId, setVerifyingId] = useState<number | null>(null);
+  const [banningId, setBanningId] = useState<number | null>(null);
   const [selectedInterviewer, setSelectedInterviewer] = useState<Interviewer | null>(null);
+  const [confirmTarget, setConfirmTarget] = useState<Interviewer | null>(null);
+  const [successTarget, setSuccessTarget] = useState<Interviewer | null>(null);
+  const [banTarget, setBanTarget] = useState<{ iv: Interviewer; ban: boolean } | null>(null);
+  const [banSuccessTarget, setBanSuccessTarget] = useState<{ iv: Interviewer; banned: boolean } | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchField, setSearchField] = useState<"name" | "email">("name");
@@ -71,6 +79,18 @@ export default function AdminInterviews() {
   const getIsVerified = (iv: Interviewer): boolean => {
     if (iv.is_verified !== undefined) return iv.is_verified;
     return false;
+  };
+
+  const isInterviewerRole = (iv: Interviewer): boolean => {
+    if ((iv.bank_details?.length ?? 0) > 0) return true;
+    if (iv.is_interviewer_verified === true || iv.is_interviewer_verified === "true") return true;
+    if ((iv.user_type ?? "").toLowerCase() === "interviewer") return true;
+    return false;
+  };
+
+  const getIsBanned = (iv: Interviewer): boolean => {
+    const value = iv.is_banned ?? iv.is_interviewer_banned;
+    return value === true || value === "true";
   };
 
   const getCompanies = (iv: Interviewer): string[] => {
@@ -95,7 +115,13 @@ export default function AdminInterviews() {
 
   // ── Derived lists ─────────────────────────────────────────────────────────
   const pendingList = pendingInterviewers;
-  const baseList = activeTab === "pending interviewers" ? pendingList : allUsers;
+  const interviewersList = allUsers.filter(isInterviewerRole);
+  const baseList =
+    activeTab === "pending interviewers" ? pendingList : activeTab === "interviewers" ? interviewersList : allUsers;
+
+  // Whether a row should be displayed/badged as an interviewer in the current tab
+  const showAsInterviewer = (iv: Interviewer): boolean =>
+    activeTab === "pending interviewers" || isInterviewerRole(iv) || getIsVerified(iv);
 
   // Filter by search query
   const filteredList = baseList.filter((item) => {
@@ -143,20 +169,42 @@ export default function AdminInterviews() {
   };
 
   // ── Mark Verified ─────────────────────────────────────────────────────────
-  const handleMarkVerified = async (userId: number) => {
-    const confirmed = window.confirm(
-      "Do you want to accept this user as an interviewer?"
-    );
-    if (!confirmed) return;
+  const requestVerify = (iv: Interviewer) => setConfirmTarget(iv);
 
+  const confirmVerify = async () => {
+    if (!confirmTarget) return;
+    const userId = confirmTarget.user_id;
     setVerifyingId(userId);
     try {
       await markInterviewerVerified(userId);
       await fetchInterviewers();
+      setSuccessTarget(confirmTarget);
+      setSelectedInterviewer(null);
     } catch (err: any) {
       setError(err?.response?.data?.message || err?.message || "Failed to verify interviewer");
     } finally {
       setVerifyingId(null);
+      setConfirmTarget(null);
+    }
+  };
+
+  // ── Ban / Unban ───────────────────────────────────────────────────────────
+  const requestBan = (iv: Interviewer) => setBanTarget({ iv, ban: !getIsBanned(iv) });
+
+  const confirmBan = async () => {
+    if (!banTarget) return;
+    const { iv, ban } = banTarget;
+    setBanningId(iv.user_id);
+    try {
+      await banInterviewer(iv.user_id, ban);
+      await fetchAllUsers();
+      setBanSuccessTarget({ iv, banned: ban });
+      setSelectedInterviewer(null);
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || "Failed to update ban status");
+    } finally {
+      setBanningId(null);
+      setBanTarget(null);
     }
   };
 
@@ -169,7 +217,7 @@ export default function AdminInterviews() {
   useEffect(() => {
     setCurrentPage(1);
     setSearchQuery("");
-    if (activeTab === "all_users") {
+    if (activeTab === "all_users" || activeTab === "interviewers") {
       fetchAllUsers();
     } else {
       fetchInterviewers();
@@ -210,6 +258,16 @@ export default function AdminInterviews() {
             <div className="stat-title">Pending Verification</div>
             <div className="stat-value" style={{ color: "#c2410c" }}>{pendingList.length}</div>
           </div>
+          <div className="stat-card">
+            <div className="stat-title">Total Interviewers</div>
+            <div className="stat-value" style={{ color: "#3b82f6" }}>{interviewersList.length}</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-title">Banned Interviewers</div>
+            <div className="stat-value" style={{ color: "#b91c1c" }}>
+              {interviewersList.filter(getIsBanned).length}
+            </div>
+          </div>
         </div>
 
         {/* ── TABS ── */}
@@ -220,6 +278,12 @@ export default function AdminInterviews() {
               onClick={() => setActiveTab("pending interviewers")}
             >
               Pending Interviewers ({pendingList.length})
+            </button>
+            <button
+              className={`view-btn ${activeTab === "interviewers" ? "active" : ""}`}
+              onClick={() => setActiveTab("interviewers")}
+            >
+              All Interviewers ({interviewersList.length})
             </button>
             <button
               className={`view-btn ${activeTab === "all_users" ? "active" : ""}`}
@@ -277,6 +341,8 @@ export default function AdminInterviews() {
             <h3>
               {activeTab === "pending interviewers"
                 ? "Pending Interviewers"
+                : activeTab === "interviewers"
+                ? "All Interviewers"
                 : "All Users"}
             </h3>
             <div className="card-count">
@@ -310,6 +376,8 @@ export default function AdminInterviews() {
                     No{" "}
                     {activeTab === "all_users"
                       ? "users"
+                      : activeTab === "interviewers"
+                      ? "interviewers"
                       : "pending interviewers"}{" "}
                     found.
                   </>
@@ -354,9 +422,7 @@ export default function AdminInterviews() {
 
                       <td className="mono" style={{ fontSize: 13 }}>{iv.email ?? "—"}</td>
                       <td>
-                        {activeTab === "all_users" && (iv.bank_details?.length ?? 0) > 0
-                          ? "Interviewer"
-                          : iv.user_type ?? "—"}
+                        {showAsInterviewer(iv) ? "Interviewer" : iv.user_type ?? "—"}
                       </td>
 
                       <td>
@@ -378,34 +444,62 @@ export default function AdminInterviews() {
                       </td>
 
                       <td>
-                        <span
-                          className="badge"
-                          style={{
-                            background: activeTab === "pending interviewers" || (activeTab === "all_users" && (iv.bank_details?.length ?? 0) > 0) || getIsVerified(iv) ? "#d1fae5" : "#fef3c7",
-                            color: activeTab === "pending interviewers" || (activeTab === "all_users" && (iv.bank_details?.length ?? 0) > 0) || getIsVerified(iv) ? "#047857" : "#b45309",
-                            fontSize: 12,
-                            fontWeight: 500,
-                            padding: "4px 8px",
-                            borderRadius: 4,
-                          }}
-                        >
-                          {activeTab === "pending interviewers" || (activeTab === "all_users" && (iv.bank_details?.length ?? 0) > 0) || getIsVerified(iv) ? "Interviewer" : "Candidate"}
-                        </span>
+                        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                          <span
+                            className="badge"
+                            style={{
+                              background: showAsInterviewer(iv) ? "#d1fae5" : "#fef3c7",
+                              color: showAsInterviewer(iv) ? "#047857" : "#b45309",
+                              fontSize: 12,
+                              fontWeight: 500,
+                              padding: "4px 8px",
+                              borderRadius: 4,
+                            }}
+                          >
+                            {showAsInterviewer(iv) ? "Interviewer" : "Candidate"}
+                          </span>
+                          {getIsBanned(iv) && (
+                            <span
+                              className="badge"
+                              style={{
+                                background: "#fee2e2",
+                                color: "#b91c1c",
+                                fontSize: 12,
+                                fontWeight: 500,
+                                padding: "4px 8px",
+                                borderRadius: 4,
+                              }}
+                            >
+                              Banned
+                            </span>
+                          )}
+                        </div>
                       </td>
 
                       <td className="action-col" onClick={(e) => e.stopPropagation()}>
-                        {activeTab === "all_users" ? (
-                          <span style={{ color: "#9ca3af" }}>—</span>
-                        ) : activeTab === "pending interviewers" ? (
+                        {activeTab === "pending interviewers" ? (
                           <button
                             className="btn primary"
                             disabled={verifyingId === iv.user_id}
-                            onClick={() => handleMarkVerified(iv.user_id)}
+                            onClick={() => requestVerify(iv)}
                           >
                             {verifyingId === iv.user_id ? "Saving…" : "Verify"}
                           </button>
+                        ) : isInterviewerRole(iv) ? (
+                          <button
+                            className="btn"
+                            style={
+                              getIsBanned(iv)
+                                ? { background: "#d1fae5", color: "#047857" }
+                                : { background: "#fee2e2", color: "#b91c1c" }
+                            }
+                            disabled={banningId === iv.user_id}
+                            onClick={() => requestBan(iv)}
+                          >
+                            {banningId === iv.user_id ? "Saving…" : getIsBanned(iv) ? "Unban" : "Ban"}
+                          </button>
                         ) : (
-                          <span className="badge success">{getIsVerified(iv) ? "Verified" : "Pending"}</span>
+                          <span style={{ color: "#9ca3af" }}>—</span>
                         )}
                       </td>
                     </tr>
@@ -479,8 +573,8 @@ export default function AdminInterviews() {
                   <div className="detail-item">
                     <label>Role</label>
                     <span>
-                      {(selectedInterviewer.bank_details?.length ?? 0) > 0 
-                        ? "Interviewer" 
+                      {isInterviewerRole(selectedInterviewer)
+                        ? "Interviewer"
                         : selectedInterviewer.user_type ?? "—"}
                     </span>
                   </div>
@@ -494,6 +588,23 @@ export default function AdminInterviews() {
                       </span>
                     </span>
                   </div>
+                  {isInterviewerRole(selectedInterviewer) && (
+                    <div className="detail-item">
+                      <label>Ban Status</label>
+                      <span>
+                        <span
+                          className="badge"
+                          style={
+                            getIsBanned(selectedInterviewer)
+                              ? { background: "#fee2e2", color: "#b91c1c" }
+                              : { background: "#d1fae5", color: "#047857" }
+                          }
+                        >
+                          {getIsBanned(selectedInterviewer) ? "Banned" : "Active"}
+                        </span>
+                      </span>
+                    </div>
+                  )}
                   {(selectedInterviewer as any).created_at && (
                     <div className="detail-item">
                       <label>Created At</label>
@@ -652,12 +763,27 @@ export default function AdminInterviews() {
                 <button
                   className="btn primary"
                   disabled={verifyingId === selectedInterviewer.user_id}
-                  onClick={async () => {
-                    await handleMarkVerified(selectedInterviewer.user_id);
-                    setSelectedInterviewer(null);
-                  }}
+                  onClick={() => requestVerify(selectedInterviewer)}
                 >
                   {verifyingId === selectedInterviewer.user_id ? "Saving…" : "Mark as Verified"}
+                </button>
+              )}
+              {isInterviewerRole(selectedInterviewer) && (
+                <button
+                  className="btn"
+                  style={
+                    getIsBanned(selectedInterviewer)
+                      ? { background: "#d1fae5", color: "#047857" }
+                      : { background: "#fee2e2", color: "#b91c1c" }
+                  }
+                  disabled={banningId === selectedInterviewer.user_id}
+                  onClick={() => requestBan(selectedInterviewer)}
+                >
+                  {banningId === selectedInterviewer.user_id
+                    ? "Saving…"
+                    : getIsBanned(selectedInterviewer)
+                    ? "Unban Interviewer"
+                    : "Ban Interviewer"}
                 </button>
               )}
               <button
@@ -666,6 +792,163 @@ export default function AdminInterviews() {
                 onClick={() => setSelectedInterviewer(null)}
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ CONFIRM VERIFY MODAL ══ */}
+      {confirmTarget && (
+        <div
+          className="modal-overlay"
+          onClick={() => verifyingId !== confirmTarget.user_id && setConfirmTarget(null)}
+        >
+          <div className="modal-content" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 style={{ fontSize: 18 }}>Confirm Verification</h2>
+              <button
+                className="modal-close"
+                disabled={verifyingId === confirmTarget.user_id}
+                onClick={() => setConfirmTarget(null)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="modal-body">
+              <p style={{ margin: 0, color: "#374151", fontSize: 14 }}>
+                Do you want to accept <strong>{fullName(confirmTarget)}</strong> as an interviewer?
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button
+                className="btn"
+                style={{ background: "#f3f4f6", color: "#374151" }}
+                disabled={verifyingId === confirmTarget.user_id}
+                onClick={() => setConfirmTarget(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn primary"
+                disabled={verifyingId === confirmTarget.user_id}
+                onClick={confirmVerify}
+              >
+                {verifyingId === confirmTarget.user_id ? "Verifying…" : "Yes, Verify"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ VERIFIED SUCCESS MODAL ══ */}
+      {successTarget && (
+        <div className="modal-overlay" onClick={() => setSuccessTarget(null)}>
+          <div className="modal-content" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 style={{ fontSize: 18 }}>Interviewer Verified</h2>
+              <button className="modal-close" onClick={() => setSuccessTarget(null)}>
+                ×
+              </button>
+            </div>
+            <div className="modal-body" style={{ textAlign: "center" }}>
+              <div style={{ fontSize: 40, marginBottom: 12 }}>✅</div>
+              <p style={{ margin: 0, color: "#374151", fontSize: 14 }}>
+                <strong>{fullName(successTarget)}</strong> has been successfully verified as an interviewer.
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn primary" onClick={() => setSuccessTarget(null)}>
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ CONFIRM BAN/UNBAN MODAL ══ */}
+      {banTarget && (
+        <div
+          className="modal-overlay"
+          onClick={() => banningId !== banTarget.iv.user_id && setBanTarget(null)}
+        >
+          <div className="modal-content" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 style={{ fontSize: 18 }}>{banTarget.ban ? "Confirm Ban" : "Confirm Unban"}</h2>
+              <button
+                className="modal-close"
+                disabled={banningId === banTarget.iv.user_id}
+                onClick={() => setBanTarget(null)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="modal-body">
+              <p style={{ margin: 0, color: "#374151", fontSize: 14 }}>
+                {banTarget.ban ? (
+                  <>
+                    Do you want to ban <strong>{fullName(banTarget.iv)}</strong>? They will no longer be able to
+                    accept or conduct interviews.
+                  </>
+                ) : (
+                  <>
+                    Do you want to unban <strong>{fullName(banTarget.iv)}</strong> and restore their access?
+                  </>
+                )}
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button
+                className="btn"
+                style={{ background: "#f3f4f6", color: "#374151" }}
+                disabled={banningId === banTarget.iv.user_id}
+                onClick={() => setBanTarget(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn"
+                style={
+                  banTarget.ban
+                    ? { background: "#dc2626", color: "#ffffff" }
+                    : { background: "#ff7a2b", color: "#ffffff" }
+                }
+                disabled={banningId === banTarget.iv.user_id}
+                onClick={confirmBan}
+              >
+                {banningId === banTarget.iv.user_id
+                  ? "Saving…"
+                  : banTarget.ban
+                  ? "Yes, Ban"
+                  : "Yes, Unban"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ BAN/UNBAN SUCCESS MODAL ══ */}
+      {banSuccessTarget && (
+        <div className="modal-overlay" onClick={() => setBanSuccessTarget(null)}>
+          <div className="modal-content" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 style={{ fontSize: 18 }}>{banSuccessTarget.banned ? "Interviewer Banned" : "Interviewer Unbanned"}</h2>
+              <button className="modal-close" onClick={() => setBanSuccessTarget(null)}>
+                ×
+              </button>
+            </div>
+            <div className="modal-body" style={{ textAlign: "center" }}>
+              <div style={{ fontSize: 40, marginBottom: 12 }}>{banSuccessTarget.banned ? "🚫" : "✅"}</div>
+              <p style={{ margin: 0, color: "#374151", fontSize: 14 }}>
+                <strong>{fullName(banSuccessTarget.iv)}</strong>{" "}
+                {banSuccessTarget.banned
+                  ? "has been banned and can no longer access interviews."
+                  : "has been unbanned and access has been restored."}
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn primary" onClick={() => setBanSuccessTarget(null)}>
+                Done
               </button>
             </div>
           </div>

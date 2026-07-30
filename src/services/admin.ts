@@ -97,6 +97,15 @@ export async function markInterviewerVerified(userId: number | string) {
   return res.data;
 }
 
+// Ban or unban an interviewer (same endpoint toggles both directions)
+export async function banInterviewer(userId: number | string, isBanned: boolean) {
+  const res = await api.patch(`/admin/interviewers/${userId}/ban`, {
+    is_banned: isBanned,
+    candidate_id: userId,
+  });
+  return res.data;
+}
+
 // Get accepted interviews
 export async function getAcceptedInterviews() {
   const res = await api.get(`/admin/accepted-interviews`);
@@ -137,4 +146,4 @@ export async function deletePricing(id: number | string) {
   const res = await api.delete(`/admin/pricing/${id}`);
   return res.data;
 }
-export default { getInterviewers, getUsers, updateUser, confirmInterviewer, getResumes, setAuthToken, loginAdmin, authLogin, logout, getPendingInterviewers, markInterviewerVerified, getAcceptedInterviews, getPriorityInterviews, getAllInterviews };
+export default { getInterviewers, getUsers, updateUser, confirmInterviewer, getResumes, setAuthToken, loginAdmin, authLogin, logout, getPendingInterviewers, markInterviewerVerified, banInterviewer, getAcceptedInterviews, getPriorityInterviews, getAllInterviews };
