@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
+import { Check, Filter, X } from "lucide-react";
 import {
   getPendingInterviewers,
   markInterviewerVerified,
   banInterviewer,
+  updateInterviewerReviewStatus,
   getUsers,
 } from "../services/admin";
 import AdminLayout from "../components/AdminLayout";
@@ -27,6 +29,7 @@ type Interviewer = {
   is_interviewer_verified?: string | boolean;
   is_banned?: string | boolean;
   is_interviewer_banned?: string | boolean;
+  review_status?: string;
   company_names?: string[];
   institution_names?: string[];
   user_type?: string;
@@ -53,15 +56,28 @@ export default function AdminInterviews() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [verifyingId, setVerifyingId] = useState<number | null>(null);
-  const [banningId, setBanningId] = useState<number | null>(null);
+  const [deactivatingId, setDeactivatingId] = useState<number | null>(null);
   const [selectedInterviewer, setSelectedInterviewer] = useState<Interviewer | null>(null);
   const [confirmTarget, setConfirmTarget] = useState<Interviewer | null>(null);
   const [successTarget, setSuccessTarget] = useState<Interviewer | null>(null);
-  const [banTarget, setBanTarget] = useState<{ iv: Interviewer; ban: boolean } | null>(null);
-  const [banSuccessTarget, setBanSuccessTarget] = useState<{ iv: Interviewer; banned: boolean } | null>(null);
+  const [statusTarget, setStatusTarget] = useState<{ iv: Interviewer; deactivate: boolean } | null>(null);
+  const [statusSuccessTarget, setStatusSuccessTarget] = useState<{ iv: Interviewer; deactivated: boolean } | null>(
+    null
+  );
+  const [reviewStatusUpdatingId, setReviewStatusUpdatingId] = useState<number | null>(null);
+  const [reviewStatusTarget, setReviewStatusTarget] = useState<{
+    iv: Interviewer;
+    next: "active" | "under_review";
+  } | null>(null);
+  const [reviewStatusSuccessTarget, setReviewStatusSuccessTarget] = useState<{
+    iv: Interviewer;
+    status: "active" | "under_review";
+  } | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchField, setSearchField] = useState<"name" | "email">("name");
+  const [accountStatusFilterTags, setAccountStatusFilterTags] = useState<Array<"active" | "deactivated">>([]);
+  const [reviewStatusFilterTags, setReviewStatusFilterTags] = useState<Array<"active" | "under_review">>([]);
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   const initials = (iv: Interviewer) => {
@@ -88,10 +104,13 @@ export default function AdminInterviews() {
     return false;
   };
 
-  const getIsBanned = (iv: Interviewer): boolean => {
+  const getIsDeactivated = (iv: Interviewer): boolean => {
     const value = iv.is_banned ?? iv.is_interviewer_banned;
     return value === true || value === "true";
   };
+
+  const getReviewStatus = (iv: Interviewer): "active" | "under_review" =>
+    (iv.review_status ?? "").toLowerCase() === "active" ? "active" : "under_review";
 
   const getCompanies = (iv: Interviewer): string[] => {
     if (iv.company_names && iv.company_names.length > 0) {
@@ -116,8 +135,27 @@ export default function AdminInterviews() {
   // ── Derived lists ─────────────────────────────────────────────────────────
   const pendingList = pendingInterviewers;
   const interviewersList = allUsers.filter(isInterviewerRole);
+
+  // Narrow the interviewers list by the selected Account status / Review status tags (no tags in a group = show all for that group)
+  const filteredInterviewersList = interviewersList.filter((iv) => {
+    if (
+      accountStatusFilterTags.length > 0 &&
+      !accountStatusFilterTags.includes(getIsDeactivated(iv) ? "deactivated" : "active")
+    ) {
+      return false;
+    }
+    if (reviewStatusFilterTags.length > 0 && !reviewStatusFilterTags.includes(getReviewStatus(iv))) {
+      return false;
+    }
+    return true;
+  });
+
   const baseList =
-    activeTab === "pending interviewers" ? pendingList : activeTab === "interviewers" ? interviewersList : allUsers;
+    activeTab === "pending interviewers"
+      ? pendingList
+      : activeTab === "interviewers"
+      ? filteredInterviewersList
+      : allUsers;
 
   // Whether a row should be displayed/badged as an interviewer in the current tab
   const showAsInterviewer = (iv: Interviewer): boolean =>
@@ -188,24 +226,55 @@ export default function AdminInterviews() {
     }
   };
 
-  // ── Ban / Unban ───────────────────────────────────────────────────────────
-  const requestBan = (iv: Interviewer) => setBanTarget({ iv, ban: !getIsBanned(iv) });
+  // ── Deactivate / Activate ────────────────────────────────────────────────
+  const requestStatusChange = (iv: Interviewer) => setStatusTarget({ iv, deactivate: !getIsDeactivated(iv) });
 
-  const confirmBan = async () => {
-    if (!banTarget) return;
-    const { iv, ban } = banTarget;
-    setBanningId(iv.user_id);
+  const confirmStatusChange = async () => {
+    if (!statusTarget) return;
+    const { iv, deactivate } = statusTarget;
+    setDeactivatingId(iv.user_id);
     try {
-      await banInterviewer(iv.user_id, ban);
+      await banInterviewer(iv.user_id, deactivate);
       await fetchAllUsers();
-      setBanSuccessTarget({ iv, banned: ban });
+      setStatusSuccessTarget({ iv, deactivated: deactivate });
       setSelectedInterviewer(null);
     } catch (err: any) {
-      setError(err?.response?.data?.message || err?.message || "Failed to update ban status");
+      setError(err?.response?.data?.message || err?.message || "Failed to update interviewer status");
     } finally {
-      setBanningId(null);
-      setBanTarget(null);
+      setDeactivatingId(null);
+      setStatusTarget(null);
     }
+  };
+
+  // ── Review Status ─────────────────────────────────────────────────────────
+  const requestReviewStatusChange = (iv: Interviewer) =>
+    setReviewStatusTarget({ iv, next: getReviewStatus(iv) === "active" ? "under_review" : "active" });
+
+  const confirmReviewStatusChange = async () => {
+    if (!reviewStatusTarget) return;
+    const { iv, next } = reviewStatusTarget;
+    setReviewStatusUpdatingId(iv.user_id);
+    try {
+      await updateInterviewerReviewStatus(iv.user_id, next);
+      await fetchAllUsers();
+      setReviewStatusSuccessTarget({ iv, status: next });
+      setSelectedInterviewer(null);
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || "Failed to update review status");
+    } finally {
+      setReviewStatusUpdatingId(null);
+      setReviewStatusTarget(null);
+    }
+  };
+
+  const toggleAccountStatusFilterTag = (tag: "active" | "deactivated") => {
+    setCurrentPage(1);
+    setAccountStatusFilterTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
+  };
+
+  const toggleReviewStatusFilterTag = (tag: "active" | "under_review") => {
+    setCurrentPage(1);
+    setReviewStatusFilterTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
   };
 
   // ── Effects ───────────────────────────────────────────────────────────────
@@ -217,6 +286,8 @@ export default function AdminInterviews() {
   useEffect(() => {
     setCurrentPage(1);
     setSearchQuery("");
+    setAccountStatusFilterTags([]);
+    setReviewStatusFilterTags([]);
     if (activeTab === "all_users" || activeTab === "interviewers") {
       fetchAllUsers();
     } else {
@@ -263,9 +334,9 @@ export default function AdminInterviews() {
             <div className="stat-value" style={{ color: "#3b82f6" }}>{interviewersList.length}</div>
           </div>
           <div className="stat-card">
-            <div className="stat-title">Banned Interviewers</div>
+            <div className="stat-title">Deactivated Interviewers</div>
             <div className="stat-value" style={{ color: "#b91c1c" }}>
-              {interviewersList.filter(getIsBanned).length}
+              {interviewersList.filter(getIsDeactivated).length}
             </div>
           </div>
         </div>
@@ -293,6 +364,105 @@ export default function AdminInterviews() {
             </button>
           </div>
         </div>
+
+        {/* ── STATUS TAG FILTERS (Interviewers tab only) ── */}
+        {activeTab === "interviewers" && (
+          <div className="tag-filter-bar">
+            <div className="tag-filter-bar-header">
+              <span className="tag-filter-heading">
+                <Filter size={14} />
+                Filters
+              </span>
+              {(accountStatusFilterTags.length > 0 || reviewStatusFilterTags.length > 0) && (
+                <button
+                  type="button"
+                  className="tag-filter-clear"
+                  onClick={() => {
+                    setAccountStatusFilterTags([]);
+                    setReviewStatusFilterTags([]);
+                  }}
+                >
+                  <X size={13} />
+                  Clear all
+                </button>
+              )}
+            </div>
+
+            <div className="tag-filter-row">
+              <span className="tag-filter-label">Account status</span>
+              <div className="tag-filter-chips">
+                <button
+                  type="button"
+                  className={`tag-chip tag-chip--active ${
+                    accountStatusFilterTags.includes("active") ? "selected" : ""
+                  }`}
+                  onClick={() => toggleAccountStatusFilterTag("active")}
+                  aria-pressed={accountStatusFilterTags.includes("active")}
+                >
+                  <span className="tag-chip-check">
+                    {accountStatusFilterTags.includes("active") && <Check size={11} strokeWidth={3} />}
+                  </span>
+                  Active
+                  <span className="tag-chip-count">
+                    {interviewersList.filter((iv) => !getIsDeactivated(iv)).length}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className={`tag-chip tag-chip--deactivated ${
+                    accountStatusFilterTags.includes("deactivated") ? "selected" : ""
+                  }`}
+                  onClick={() => toggleAccountStatusFilterTag("deactivated")}
+                  aria-pressed={accountStatusFilterTags.includes("deactivated")}
+                >
+                  <span className="tag-chip-check">
+                    {accountStatusFilterTags.includes("deactivated") && <Check size={11} strokeWidth={3} />}
+                  </span>
+                  Deactivated
+                  <span className="tag-chip-count">{interviewersList.filter(getIsDeactivated).length}</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="tag-filter-row">
+              <span className="tag-filter-label">Review status</span>
+              <div className="tag-filter-chips">
+                <button
+                  type="button"
+                  className={`tag-chip tag-chip--active ${
+                    reviewStatusFilterTags.includes("active") ? "selected" : ""
+                  }`}
+                  onClick={() => toggleReviewStatusFilterTag("active")}
+                  aria-pressed={reviewStatusFilterTags.includes("active")}
+                >
+                  <span className="tag-chip-check">
+                    {reviewStatusFilterTags.includes("active") && <Check size={11} strokeWidth={3} />}
+                  </span>
+                  Active
+                  <span className="tag-chip-count">
+                    {interviewersList.filter((iv) => getReviewStatus(iv) === "active").length}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className={`tag-chip tag-chip--under-review ${
+                    reviewStatusFilterTags.includes("under_review") ? "selected" : ""
+                  }`}
+                  onClick={() => toggleReviewStatusFilterTag("under_review")}
+                  aria-pressed={reviewStatusFilterTags.includes("under_review")}
+                >
+                  <span className="tag-chip-check">
+                    {reviewStatusFilterTags.includes("under_review") && <Check size={11} strokeWidth={3} />}
+                  </span>
+                  Under Review
+                  <span className="tag-chip-count">
+                    {interviewersList.filter((iv) => getReviewStatus(iv) === "under_review").length}
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ── SEARCH FILTER ── */}
         <div className="search-container">
@@ -371,6 +541,8 @@ export default function AdminInterviews() {
                   <>
                     No results found for "{searchQuery}" in {searchField}.
                   </>
+                ) : accountStatusFilterTags.length > 0 || reviewStatusFilterTags.length > 0 ? (
+                  <>No interviewers match the selected filters.</>
                 ) : (
                   <>
                     No{" "}
@@ -394,6 +566,7 @@ export default function AdminInterviews() {
                     <th>Companies</th>
                     <th>Education</th>
                     <th>User Type</th>
+                    <th>Review Status</th>
                     <th className="action-col">Action</th>
                   </tr>
                 </thead>
@@ -458,7 +631,7 @@ export default function AdminInterviews() {
                           >
                             {showAsInterviewer(iv) ? "Interviewer" : "Candidate"}
                           </span>
-                          {getIsBanned(iv) && (
+                          {getIsDeactivated(iv) && (
                             <span
                               className="badge"
                               style={{
@@ -470,10 +643,30 @@ export default function AdminInterviews() {
                                 borderRadius: 4,
                               }}
                             >
-                              Banned
+                              Deactivated
                             </span>
                           )}
                         </div>
+                      </td>
+
+                      <td>
+                        {showAsInterviewer(iv) ? (
+                          <span
+                            className="badge"
+                            style={{
+                              background: getReviewStatus(iv) === "active" ? "#d1fae5" : "#fef3c7",
+                              color: getReviewStatus(iv) === "active" ? "#047857" : "#b45309",
+                              fontSize: 12,
+                              fontWeight: 500,
+                              padding: "4px 8px",
+                              borderRadius: 4,
+                            }}
+                          >
+                            {getReviewStatus(iv) === "active" ? "Active" : "Under Review"}
+                          </span>
+                        ) : (
+                          <span style={{ color: "#9ca3af" }}>—</span>
+                        )}
                       </td>
 
                       <td className="action-col" onClick={(e) => e.stopPropagation()}>
@@ -489,14 +682,14 @@ export default function AdminInterviews() {
                           <button
                             className="btn"
                             style={
-                              getIsBanned(iv)
+                              getIsDeactivated(iv)
                                 ? { background: "#d1fae5", color: "#047857" }
                                 : { background: "#fee2e2", color: "#b91c1c" }
                             }
-                            disabled={banningId === iv.user_id}
-                            onClick={() => requestBan(iv)}
+                            disabled={deactivatingId === iv.user_id}
+                            onClick={() => requestStatusChange(iv)}
                           >
-                            {banningId === iv.user_id ? "Saving…" : getIsBanned(iv) ? "Unban" : "Ban"}
+                            {deactivatingId === iv.user_id ? "Saving…" : getIsDeactivated(iv) ? "Activate" : "Deactivate"}
                           </button>
                         ) : (
                           <span style={{ color: "#9ca3af" }}>—</span>
@@ -579,28 +772,28 @@ export default function AdminInterviews() {
                     </span>
                   </div>
                   <div className="detail-item">
-                    <label>Status</label>
+                    <label>Review Status</label>
                     <span>
                       <span
-                        className={`badge ${getIsVerified(selectedInterviewer) ? "success" : "pending"}`}
+                        className={`badge ${getReviewStatus(selectedInterviewer) === "active" ? "success" : "pending"}`}
                       >
-                        {getIsVerified(selectedInterviewer) ? "Verified" : "Pending"}
+                        {getReviewStatus(selectedInterviewer) === "active" ? "Active" : "Under Review"}
                       </span>
                     </span>
                   </div>
                   {isInterviewerRole(selectedInterviewer) && (
                     <div className="detail-item">
-                      <label>Ban Status</label>
+                      <label>Account Status</label>
                       <span>
                         <span
                           className="badge"
                           style={
-                            getIsBanned(selectedInterviewer)
+                            getIsDeactivated(selectedInterviewer)
                               ? { background: "#fee2e2", color: "#b91c1c" }
                               : { background: "#d1fae5", color: "#047857" }
                           }
                         >
-                          {getIsBanned(selectedInterviewer) ? "Banned" : "Active"}
+                          {getIsDeactivated(selectedInterviewer) ? "Deactivated" : "Active"}
                         </span>
                       </span>
                     </div>
@@ -772,18 +965,36 @@ export default function AdminInterviews() {
                 <button
                   className="btn"
                   style={
-                    getIsBanned(selectedInterviewer)
+                    getIsDeactivated(selectedInterviewer)
                       ? { background: "#d1fae5", color: "#047857" }
                       : { background: "#fee2e2", color: "#b91c1c" }
                   }
-                  disabled={banningId === selectedInterviewer.user_id}
-                  onClick={() => requestBan(selectedInterviewer)}
+                  disabled={deactivatingId === selectedInterviewer.user_id}
+                  onClick={() => requestStatusChange(selectedInterviewer)}
                 >
-                  {banningId === selectedInterviewer.user_id
+                  {deactivatingId === selectedInterviewer.user_id
                     ? "Saving…"
-                    : getIsBanned(selectedInterviewer)
-                    ? "Unban Interviewer"
-                    : "Ban Interviewer"}
+                    : getIsDeactivated(selectedInterviewer)
+                    ? "Activate Interviewer"
+                    : "Deactivate Interviewer"}
+                </button>
+              )}
+              {isInterviewerRole(selectedInterviewer) && (
+                <button
+                  className="btn"
+                  style={
+                    getReviewStatus(selectedInterviewer) === "active"
+                      ? { background: "#fef3c7", color: "#b45309" }
+                      : { background: "#d1fae5", color: "#047857" }
+                  }
+                  disabled={reviewStatusUpdatingId === selectedInterviewer.user_id}
+                  onClick={() => requestReviewStatusChange(selectedInterviewer)}
+                >
+                  {reviewStatusUpdatingId === selectedInterviewer.user_id
+                    ? "Saving…"
+                    : getReviewStatus(selectedInterviewer) === "active"
+                    ? "Move to Under Review"
+                    : "Mark Review Active"}
                 </button>
               )}
               <button
@@ -866,33 +1077,33 @@ export default function AdminInterviews() {
         </div>
       )}
 
-      {/* ══ CONFIRM BAN/UNBAN MODAL ══ */}
-      {banTarget && (
+      {/* ══ CONFIRM DEACTIVATE/ACTIVATE MODAL ══ */}
+      {statusTarget && (
         <div
           className="modal-overlay"
-          onClick={() => banningId !== banTarget.iv.user_id && setBanTarget(null)}
+          onClick={() => deactivatingId !== statusTarget.iv.user_id && setStatusTarget(null)}
         >
           <div className="modal-content" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2 style={{ fontSize: 18 }}>{banTarget.ban ? "Confirm Ban" : "Confirm Unban"}</h2>
+              <h2 style={{ fontSize: 18 }}>{statusTarget.deactivate ? "Confirm Deactivation" : "Confirm Activation"}</h2>
               <button
                 className="modal-close"
-                disabled={banningId === banTarget.iv.user_id}
-                onClick={() => setBanTarget(null)}
+                disabled={deactivatingId === statusTarget.iv.user_id}
+                onClick={() => setStatusTarget(null)}
               >
                 ×
               </button>
             </div>
             <div className="modal-body">
               <p style={{ margin: 0, color: "#374151", fontSize: 14 }}>
-                {banTarget.ban ? (
+                {statusTarget.deactivate ? (
                   <>
-                    Do you want to ban <strong>{fullName(banTarget.iv)}</strong>? They will no longer be able to
-                    accept or conduct interviews.
+                    Do you want to deactivate <strong>{fullName(statusTarget.iv)}</strong>? They will no longer be
+                    able to accept or conduct interviews.
                   </>
                 ) : (
                   <>
-                    Do you want to unban <strong>{fullName(banTarget.iv)}</strong> and restore their access?
+                    Do you want to activate <strong>{fullName(statusTarget.iv)}</strong> and restore their access?
                   </>
                 )}
               </p>
@@ -901,53 +1112,143 @@ export default function AdminInterviews() {
               <button
                 className="btn"
                 style={{ background: "#f3f4f6", color: "#374151" }}
-                disabled={banningId === banTarget.iv.user_id}
-                onClick={() => setBanTarget(null)}
+                disabled={deactivatingId === statusTarget.iv.user_id}
+                onClick={() => setStatusTarget(null)}
               >
                 Cancel
               </button>
               <button
                 className="btn"
                 style={
-                  banTarget.ban
+                  statusTarget.deactivate
                     ? { background: "#dc2626", color: "#ffffff" }
                     : { background: "#ff7a2b", color: "#ffffff" }
                 }
-                disabled={banningId === banTarget.iv.user_id}
-                onClick={confirmBan}
+                disabled={deactivatingId === statusTarget.iv.user_id}
+                onClick={confirmStatusChange}
               >
-                {banningId === banTarget.iv.user_id
+                {deactivatingId === statusTarget.iv.user_id
                   ? "Saving…"
-                  : banTarget.ban
-                  ? "Yes, Ban"
-                  : "Yes, Unban"}
+                  : statusTarget.deactivate
+                  ? "Yes, Deactivate"
+                  : "Yes, Activate"}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ══ BAN/UNBAN SUCCESS MODAL ══ */}
-      {banSuccessTarget && (
-        <div className="modal-overlay" onClick={() => setBanSuccessTarget(null)}>
+      {/* ══ DEACTIVATE/ACTIVATE SUCCESS MODAL ══ */}
+      {statusSuccessTarget && (
+        <div className="modal-overlay" onClick={() => setStatusSuccessTarget(null)}>
           <div className="modal-content" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2 style={{ fontSize: 18 }}>{banSuccessTarget.banned ? "Interviewer Banned" : "Interviewer Unbanned"}</h2>
-              <button className="modal-close" onClick={() => setBanSuccessTarget(null)}>
+              <h2 style={{ fontSize: 18 }}>
+                {statusSuccessTarget.deactivated ? "Interviewer Deactivated" : "Interviewer Activated"}
+              </h2>
+              <button className="modal-close" onClick={() => setStatusSuccessTarget(null)}>
                 ×
               </button>
             </div>
             <div className="modal-body" style={{ textAlign: "center" }}>
-              <div style={{ fontSize: 40, marginBottom: 12 }}>{banSuccessTarget.banned ? "🚫" : "✅"}</div>
+              <div style={{ fontSize: 40, marginBottom: 12 }}>{statusSuccessTarget.deactivated ? "🚫" : "✅"}</div>
               <p style={{ margin: 0, color: "#374151", fontSize: 14 }}>
-                <strong>{fullName(banSuccessTarget.iv)}</strong>{" "}
-                {banSuccessTarget.banned
-                  ? "has been banned and can no longer access interviews."
-                  : "has been unbanned and access has been restored."}
+                <strong>{fullName(statusSuccessTarget.iv)}</strong>{" "}
+                {statusSuccessTarget.deactivated
+                  ? "has been deactivated and can no longer access interviews."
+                  : "has been activated and access has been restored."}
               </p>
             </div>
             <div className="modal-footer">
-              <button className="btn primary" onClick={() => setBanSuccessTarget(null)}>
+              <button className="btn primary" onClick={() => setStatusSuccessTarget(null)}>
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ CONFIRM REVIEW STATUS MODAL ══ */}
+      {reviewStatusTarget && (
+        <div
+          className="modal-overlay"
+          onClick={() =>
+            reviewStatusUpdatingId !== reviewStatusTarget.iv.user_id && setReviewStatusTarget(null)
+          }
+        >
+          <div className="modal-content" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 style={{ fontSize: 18 }}>
+                {reviewStatusTarget.next === "active" ? "Mark Review Active" : "Move to Under Review"}
+              </h2>
+              <button
+                className="modal-close"
+                disabled={reviewStatusUpdatingId === reviewStatusTarget.iv.user_id}
+                onClick={() => setReviewStatusTarget(null)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="modal-body">
+              <p style={{ margin: 0, color: "#374151", fontSize: 14 }}>
+                {reviewStatusTarget.next === "active" ? (
+                  <>
+                    Do you want to mark <strong>{fullName(reviewStatusTarget.iv)}</strong>'s review status as
+                    active?
+                  </>
+                ) : (
+                  <>
+                    Do you want to move <strong>{fullName(reviewStatusTarget.iv)}</strong> back to under review?
+                  </>
+                )}
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button
+                className="btn"
+                style={{ background: "#f3f4f6", color: "#374151" }}
+                disabled={reviewStatusUpdatingId === reviewStatusTarget.iv.user_id}
+                onClick={() => setReviewStatusTarget(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn primary"
+                disabled={reviewStatusUpdatingId === reviewStatusTarget.iv.user_id}
+                onClick={confirmReviewStatusChange}
+              >
+                {reviewStatusUpdatingId === reviewStatusTarget.iv.user_id
+                  ? "Saving…"
+                  : reviewStatusTarget.next === "active"
+                  ? "Yes, Mark Active"
+                  : "Yes, Move to Under Review"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ REVIEW STATUS SUCCESS MODAL ══ */}
+      {reviewStatusSuccessTarget && (
+        <div className="modal-overlay" onClick={() => setReviewStatusSuccessTarget(null)}>
+          <div className="modal-content" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 style={{ fontSize: 18 }}>Review Status Updated</h2>
+              <button className="modal-close" onClick={() => setReviewStatusSuccessTarget(null)}>
+                ×
+              </button>
+            </div>
+            <div className="modal-body" style={{ textAlign: "center" }}>
+              <div style={{ fontSize: 40, marginBottom: 12 }}>
+                {reviewStatusSuccessTarget.status === "active" ? "✅" : "🕓"}
+              </div>
+              <p style={{ margin: 0, color: "#374151", fontSize: 14 }}>
+                <strong>{fullName(reviewStatusSuccessTarget.iv)}</strong>'s review status is now{" "}
+                <strong>{reviewStatusSuccessTarget.status === "active" ? "Active" : "Under Review"}</strong>.
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn primary" onClick={() => setReviewStatusSuccessTarget(null)}>
                 Done
               </button>
             </div>

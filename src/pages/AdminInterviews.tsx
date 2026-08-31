@@ -160,7 +160,30 @@ const formatWords = (value?: string | null) => {
     .join(" ");
 };
 
+const isCancelledInterview = (item: MockInterview): boolean => {
+  const status = (item.interview_status ?? "").toLowerCase();
+  const cancelledBy = (item.cancelled_by ?? "").toLowerCase();
+  return status.includes("cancel") || cancelledBy.includes("candidate") || cancelledBy.includes("interviewer");
+};
+
+const getCancelledDisplayText = (item: MockInterview): string => {
+  const cancelledBy = (item.cancelled_by ?? "").toLowerCase();
+  if (cancelledBy.includes("candidate")) return "Cancelled by Candidate";
+  if (cancelledBy.includes("interviewer")) return "Cancelled by Interviewer";
+
+  const rawStatus = (item.interview_status ?? "").replace(/_/g, " ");
+  if (!rawStatus) return "Cancelled";
+  return rawStatus
+    .split(" ")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+};
+
 const renderStatusBadge = (item: MockInterview) => {
+  if (isCancelledInterview(item)) {
+    return <span className="status-badge status-cancelled">{getCancelledDisplayText(item)}</span>;
+  }
+
   if (item.interviewer_id === null) {
     return <span className="status-badge status-pending">Pending</span>;
   }
@@ -170,9 +193,6 @@ const renderStatusBadge = (item: MockInterview) => {
 
   if (expired) {
     return <span className="status-badge status-expired">Completed</span>;
-  }
-  if (s.includes("cancel")) {
-    return <span className="status-badge status-cancelled">{item.interview_status.replace(/_/g, " ")}</span>;
   }
   if (s.includes("scheduled") || s.includes("confirmed") || s.includes("active")) {
     return <span className="status-badge status-active">{item.interview_status.replace(/_/g, " ")}</span>;
@@ -229,7 +249,7 @@ export default function AdminInterviews() {
   // ── Stats derived from current tab data ────────────────────────────────────
   const stats = {
     total: activeData.length,
-    active: activeData.filter((i) => !isExpired(i.end_time_utc) && !i.interview_status.toLowerCase().includes("cancel")).length,
+    active: activeData.filter((i) => !isExpired(i.end_time_utc) && !isCancelledInterview(i)).length,
     completed: activeData.filter((i) => isExpired(i.end_time_utc)).length,
     priority: activeData.filter((i) => i.priority_status === "priority").length,
   };
@@ -238,7 +258,7 @@ export default function AdminInterviews() {
   const statFilteredData = useMemo(() => {
     switch (statFilter) {
       case "active":
-        return activeData.filter((i) => !isExpired(i.end_time_utc) && !i.interview_status.toLowerCase().includes("cancel"));
+        return activeData.filter((i) => !isExpired(i.end_time_utc) && !isCancelledInterview(i));
       case "completed":
         return activeData.filter((i) => isExpired(i.end_time_utc));
       case "priority":
