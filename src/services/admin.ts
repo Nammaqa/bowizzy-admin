@@ -158,3 +158,4 @@ export async function deletePricing(id: number | string) {
   return res.data;
 }
 export default { getInterviewers, getUsers, updateUser, confirmInterviewer, getResumes, setAuthToken, loginAdmin, authLogin, logout, getPendingInterviewers, markInterviewerVerified, banInterviewer, updateInterviewerReviewStatus, getAcceptedInterviews, getPriorityInterviews, getAllInterviews };
+//.

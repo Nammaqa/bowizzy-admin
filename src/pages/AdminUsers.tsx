@@ -1327,6 +1327,8 @@ function NamePills({
   max: number;
   color: string;
   textColor: string;
+  //
+
 }) {
   if (!items || items.length === 0)
     return <span style={{ color: "#9ca3af" }}>—</span>;
