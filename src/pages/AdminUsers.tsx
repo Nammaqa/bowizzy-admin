@@ -129,11 +129,22 @@ export default function AdminInterviews() {
   };
 
   const hasActiveInterview = (iv: Interviewer): boolean =>
-    allInterviews.some(
-      (interview) =>
-        interview.interview_status === "confirmed" &&
+    allInterviews.some((interview) => {
+      const status = (interview.interview_status ?? "").toLowerCase();
+      const isActiveAcceptedInterview =
+        status === "accepted" ||
+        status === "confirmed" ||
+        status === "scheduled" ||
+        status === "active";
+
+      return (
+        isActiveAcceptedInterview &&
         (interview.candidate_id === iv.user_id || interview.interviewer_id === iv.user_id)
-    );
+      );
+    });
+
+  const canDeactivate = (iv: Interviewer): boolean =>
+    !getIsDeactivated(iv) && !interviewsLoading && !hasActiveInterview(iv);
 
   const getCompanies = (iv: Interviewer): string[] => {
     if (iv.company_names && iv.company_names.length > 0) {
@@ -263,11 +274,22 @@ export default function AdminInterviews() {
   };
 
   // ── Deactivate / Activate ────────────────────────────────────────────────
-  const requestStatusChange = (iv: Interviewer) => setStatusTarget({ iv, deactivate: !getIsDeactivated(iv) });
+  const requestStatusChange = (iv: Interviewer) => {
+    if (canDeactivate(iv)) {
+      setStatusTarget({ iv, deactivate: true });
+      return;
+    }
+
+    if (getIsDeactivated(iv)) setStatusTarget({ iv, deactivate: false });
+  };
 
   const confirmStatusChange = async () => {
     if (!statusTarget) return;
     const { iv, deactivate } = statusTarget;
+    if (deactivate && !canDeactivate(iv)) {
+      setStatusTarget(null);
+      return;
+    }
     setDeactivatingId(iv.user_id);
     try {
       await banInterviewer(iv.user_id, deactivate);
@@ -283,12 +305,18 @@ export default function AdminInterviews() {
   };
 
   // ── Review Status ─────────────────────────────────────────────────────────
-  const requestReviewStatusChange = (iv: Interviewer) =>
+  const requestReviewStatusChange = (iv: Interviewer) => {
+    if (getReviewStatus(iv) === "active" && hasActiveInterview(iv)) return;
     setReviewStatusTarget({ iv, next: getReviewStatus(iv) === "active" ? "under_review" : "active" });
+  };
 
   const confirmReviewStatusChange = async () => {
     if (!reviewStatusTarget) return;
     const { iv, next } = reviewStatusTarget;
+    if (next === "under_review" && hasActiveInterview(iv)) {
+      setReviewStatusTarget(null);
+      return;
+    }
     setReviewStatusUpdatingId(iv.user_id);
     try {
       const response = await updateInterviewerReviewStatus(iv.user_id, next);
@@ -606,8 +634,8 @@ export default function AdminInterviews() {
                     <th>Role</th>
                     <th>Companies</th>
                     <th>Education</th>
-                    <th>User Type</th>
-                    <th>Review Status</th>
+                    {activeTab !== "pending interviewers" && <th>User Type</th>}
+                    {activeTab !== "pending interviewers" && <th>Review Status</th>}
                     <th className="action-col">Action</th>
                   </tr>
                 </thead>
@@ -657,58 +685,62 @@ export default function AdminInterviews() {
                         />
                       </td>
 
-                      <td>
-                        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                          <span
-                            className="badge"
-                            style={{
-                              background: showAsInterviewer(iv) ? "#d1fae5" : "#fef3c7",
-                              color: showAsInterviewer(iv) ? "#047857" : "#b45309",
-                              fontSize: 12,
-                              fontWeight: 500,
-                              padding: "4px 8px",
-                              borderRadius: 4,
-                            }}
-                          >
-                            {showAsInterviewer(iv) ? "Interviewer" : "Candidate"}
-                          </span>
-                          {getIsDeactivated(iv) && (
+                      {activeTab !== "pending interviewers" && (
+                        <td>
+                          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                             <span
                               className="badge"
                               style={{
-                                background: "#fee2e2",
-                                color: "#b91c1c",
+                                background: showAsInterviewer(iv) ? "#d1fae5" : "#fef3c7",
+                                color: showAsInterviewer(iv) ? "#047857" : "#b45309",
                                 fontSize: 12,
                                 fontWeight: 500,
                                 padding: "4px 8px",
                                 borderRadius: 4,
                               }}
                             >
-                              Deactivated
+                              {showAsInterviewer(iv) ? "Interviewer" : "Candidate"}
                             </span>
-                          )}
-                        </div>
-                      </td>
+                            {getIsDeactivated(iv) && (
+                              <span
+                                className="badge"
+                                style={{
+                                  background: "#fee2e2",
+                                  color: "#b91c1c",
+                                  fontSize: 12,
+                                  fontWeight: 500,
+                                  padding: "4px 8px",
+                                  borderRadius: 4,
+                                }}
+                              >
+                                Deactivated
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                      )}
 
-                      <td>
-                        {showAsInterviewer(iv) ? (
-                          <span
-                            className="badge"
-                            style={{
-                              background: getReviewStatus(iv) === "active" ? "#d1fae5" : "#fef3c7",
-                              color: getReviewStatus(iv) === "active" ? "#047857" : "#b45309",
-                              fontSize: 12,
-                              fontWeight: 500,
-                              padding: "4px 8px",
-                              borderRadius: 4,
-                            }}
-                          >
-                            {getReviewStatusLabel(iv)}
-                          </span>
-                        ) : (
-                          <span style={{ color: "#9ca3af" }}>—</span>
-                        )}
-                      </td>
+                      {activeTab !== "pending interviewers" && (
+                        <td>
+                          {showAsInterviewer(iv) ? (
+                            <span
+                              className="badge"
+                              style={{
+                                background: getReviewStatus(iv) === "active" ? "#d1fae5" : "#fef3c7",
+                                color: getReviewStatus(iv) === "active" ? "#047857" : "#b45309",
+                                fontSize: 12,
+                                fontWeight: 500,
+                                padding: "4px 8px",
+                                borderRadius: 4,
+                              }}
+                            >
+                              {getReviewStatusLabel(iv)}
+                            </span>
+                          ) : (
+                            <span style={{ color: "#9ca3af" }}>—</span>
+                          )}
+                        </td>
+                      )}
 
                       <td className="action-col" onClick={(e) => e.stopPropagation()}>
                         {activeTab === "pending interviewers" ? (
@@ -727,7 +759,7 @@ export default function AdminInterviews() {
                                 ? { background: "#d1fae5", color: "#047857" }
                                 : { background: "#fee2e2", color: "#b91c1c" }
                             }
-                            disabled={deactivatingId === iv.user_id}
+                            disabled={deactivatingId === iv.user_id || (!getIsDeactivated(iv) && !canDeactivate(iv))}
                             onClick={() => requestStatusChange(iv)}
                           >
                             {deactivatingId === iv.user_id ? "Saving…" : getIsDeactivated(iv) ? "Activate" : "Deactivate"}
@@ -1002,7 +1034,8 @@ export default function AdminInterviews() {
                   {verifyingId === selectedInterviewer.user_id ? "Saving…" : "Mark as Verified"}
                 </button>
               )}
-              {isInterviewerRole(selectedInterviewer) && (
+              {isInterviewerRole(selectedInterviewer) &&
+                (getIsDeactivated(selectedInterviewer) || !hasActiveInterview(selectedInterviewer)) && (
                 <button
                   className="btn"
                   style={
@@ -1020,7 +1053,8 @@ export default function AdminInterviews() {
                     : "Deactivate Interviewer"}
                 </button>
               )}
-              {isInterviewerRole(selectedInterviewer) && (
+              {isInterviewerRole(selectedInterviewer) &&
+                (getReviewStatus(selectedInterviewer) !== "active" || !hasActiveInterview(selectedInterviewer)) && (
                 <button
                   className="btn"
                   style={
@@ -1028,11 +1062,7 @@ export default function AdminInterviews() {
                       ? { background: "#fef3c7", color: "#b45309" }
                       : { background: "#d1fae5", color: "#047857" }
                   }
-                  disabled={
-                    reviewStatusUpdatingId === selectedInterviewer.user_id ||
-                    (getReviewStatus(selectedInterviewer) === "active" &&
-                      (interviewsLoading || hasActiveInterview(selectedInterviewer)))
-                  }
+                  disabled={reviewStatusUpdatingId === selectedInterviewer.user_id}
                   onClick={() => requestReviewStatusChange(selectedInterviewer)}
                 >
                   {reviewStatusUpdatingId === selectedInterviewer.user_id
@@ -1042,13 +1072,6 @@ export default function AdminInterviews() {
                     : "Mark Review Active"}
                 </button>
               )}
-              {isInterviewerRole(selectedInterviewer) &&
-                getReviewStatus(selectedInterviewer) === "active" &&
-                hasActiveInterview(selectedInterviewer) && (
-                  <p style={{ width: "100%", margin: 0, color: "#b45309", fontSize: 13 }}>
-                    Please complete the active interview first.
-                  </p>
-                )}
               <button
                 className="btn"
                 style={{ background: "#f3f4f6", color: "#374151" }}
@@ -1327,8 +1350,7 @@ function NamePills({
   max: number;
   color: string;
   textColor: string;
-  //
-
+  
 }) {
   if (!items || items.length === 0)
     return <span style={{ color: "#9ca3af" }}>—</span>;
