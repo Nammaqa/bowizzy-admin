@@ -161,26 +161,29 @@ const formatWords = (value?: string | null) => {
 };
 
 const renderStatusBadge = (item: MockInterview) => {
+  const status = item.interview_status || "";
+  const s = status.toLowerCase();
+  const label = formatWords(status);
+
+  if (s.includes("cancel")) {
+    return <span className="status-badge status-cancelled">{label}</span>;
+  }
   if (item.interviewer_id === null) {
     return <span className="status-badge status-pending">Pending</span>;
   }
 
   const expired = isExpired(item.end_time_utc);
-  const s = item.interview_status.toLowerCase();
 
   if (expired) {
     return <span className="status-badge status-expired">Completed</span>;
   }
-  if (s.includes("cancel")) {
-    return <span className="status-badge status-cancelled">{item.interview_status.replace(/_/g, " ")}</span>;
-  }
   if (s.includes("scheduled") || s.includes("confirmed") || s.includes("active")) {
-    return <span className="status-badge status-active">{item.interview_status.replace(/_/g, " ")}</span>;
+    return <span className="status-badge status-active">{label}</span>;
   }
   if (s.includes("pending")) {
-    return <span className="status-badge status-pending">{item.interview_status.replace(/_/g, " ")}</span>;
+    return <span className="status-badge status-pending">{label}</span>;
   }
-  return <span className="status-badge status-default">{item.interview_status.replace(/_/g, " ")}</span>;
+  return <span className="status-badge status-default">{label}</span>;
 };
 
 const columnHelper = createColumnHelper<MockInterview>();

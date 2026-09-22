@@ -9,6 +9,7 @@ import {
   getAllInterviews,
 } from "../services/admin";
 import AdminLayout from "../components/AdminLayout";
+import AdminDeletedUsers, { type DeletedUserRecord } from "./AdminDeletedUsers";
 
 // Reuse the Users page CSS — same design system
 import "./AdminUsers.css";
@@ -58,7 +59,9 @@ type AdminInterview = {
 const ITEMS_PER_PAGE = 8;
 
 export default function AdminInterviews() {
-  const [activeTab, setActiveTab] = useState<"pending interviewers" | "all_users" | "interviewers">("pending interviewers");
+  const [activeTab, setActiveTab] = useState<
+    "pending interviewers" | "all_users" | "interviewers" | "deleted_users"
+  >("pending interviewers");
   const [pendingInterviewers, setPendingInterviewers] = useState<Interviewer[]>([]);
   const [allUsers, setAllUsers] = useState<Interviewer[]>([]);
   const [allInterviews, setAllInterviews] = useState<AdminInterview[]>([]);
@@ -146,6 +149,16 @@ export default function AdminInterviews() {
   const canDeactivate = (iv: Interviewer): boolean =>
     !getIsDeactivated(iv) && !interviewsLoading && !hasActiveInterview(iv);
 
+  const getBlockedStatusMessage = (iv: Interviewer, action: "deactivate" | "review"): string | null => {
+    const activeInterviewBlocked = hasActiveInterview(iv);
+
+    if (action === "deactivate") {
+      return !getIsDeactivated(iv) && activeInterviewBlocked ? "Changing the status is not possible " : null;
+    }
+
+    return getReviewStatus(iv) === "active" && activeInterviewBlocked ? "Changing the status is not possible " : null;
+  };
+
   const getCompanies = (iv: Interviewer): string[] => {
     if (iv.company_names && iv.company_names.length > 0) {
       return iv.company_names;
@@ -167,8 +180,13 @@ export default function AdminInterviews() {
   };
 
   // ── Derived lists ─────────────────────────────────────────────────────────
-  const pendingList = pendingInterviewers;
-  const interviewersList = allUsers.filter(isInterviewerRole);
+  const isDeletedUser = (iv: Interviewer): boolean =>
+    (iv.email ?? iv.personal_details?.email ?? "").toLowerCase().startsWith("deleted_");
+
+  const pendingList = pendingInterviewers.filter((iv) => !isDeletedUser(iv));
+  const visibleUsers = allUsers.filter((iv) => !isDeletedUser(iv));
+  const deletedUsers = allUsers.filter(isDeletedUser);
+  const interviewersList = visibleUsers.filter(isInterviewerRole);
 
   // Narrow the interviewers list by the selected Account status / Review status tags (no tags in a group = show all for that group)
   const filteredInterviewersList = interviewersList.filter((iv) => {
@@ -189,7 +207,7 @@ export default function AdminInterviews() {
       ? pendingList
       : activeTab === "interviewers"
       ? filteredInterviewersList
-      : allUsers;
+      : visibleUsers;
 
   // Whether a row should be displayed/badged as an interviewer in the current tab
   const showAsInterviewer = (iv: Interviewer): boolean =>
@@ -357,7 +375,7 @@ export default function AdminInterviews() {
     setSearchQuery("");
     setAccountStatusFilterTags([]);
     setReviewStatusFilterTags([]);
-    if (activeTab === "all_users" || activeTab === "interviewers") {
+    if (activeTab === "all_users" || activeTab === "interviewers" || activeTab === "deleted_users") {
       fetchAllUsers();
     } else {
       fetchInterviewers();
@@ -392,7 +410,7 @@ export default function AdminInterviews() {
         <div className="stats-grid">
           <div className="stat-card">
             <div className="stat-title">Total Users</div>
-            <div className="stat-value" style={{ color: "#1f2937" }}>{allUsers.length}</div>
+            <div className="stat-value" style={{ color: "#1f2937" }}>{visibleUsers.length}</div>
           </div>
           <div className="stat-card">
             <div className="stat-title">Pending Verification</div>
@@ -429,10 +447,26 @@ export default function AdminInterviews() {
               className={`view-btn ${activeTab === "all_users" ? "active" : ""}`}
               onClick={() => setActiveTab("all_users")}
             >
-              All Users ({allUsers.length})
+              All Users ({visibleUsers.length})
+            </button>
+            <button
+              className={`view-btn ${activeTab === "deleted_users" ? "active" : ""}`}
+              onClick={() => setActiveTab("deleted_users")}
+            >
+              Deleted Users ({deletedUsers.length})
             </button>
           </div>
         </div>
+
+        {activeTab === "deleted_users" ? (
+          <AdminDeletedUsers
+            embedded
+            users={deletedUsers as DeletedUserRecord[]}
+            loading={loading}
+            error={error}
+          />
+        ) : (
+          <>
 
         {/* ── STATUS TAG FILTERS (Interviewers tab only) ── */}
         {activeTab === "interviewers" && (
@@ -752,18 +786,24 @@ export default function AdminInterviews() {
                             {verifyingId === iv.user_id ? "Saving…" : "Verify"}
                           </button>
                         ) : isInterviewerRole(iv) ? (
-                          <button
-                            className="btn"
-                            style={
-                              getIsDeactivated(iv)
-                                ? { background: "#d1fae5", color: "#047857" }
-                                : { background: "#fee2e2", color: "#b91c1c" }
-                            }
-                            disabled={deactivatingId === iv.user_id || (!getIsDeactivated(iv) && !canDeactivate(iv))}
-                            onClick={() => requestStatusChange(iv)}
-                          >
-                            {deactivatingId === iv.user_id ? "Saving…" : getIsDeactivated(iv) ? "Activate" : "Deactivate"}
-                          </button>
+                          getBlockedStatusMessage(iv, "deactivate") ? (
+                            <span style={{ color: "#9ca3af", fontSize: 12, lineHeight: 1.4 }}>
+                              Changing the status is not possible user have the active interview.
+                            </span>
+                          ) : (
+                            <button
+                              className="btn"
+                              style={
+                                getIsDeactivated(iv)
+                                  ? { background: "#d1fae5", color: "#047857" }
+                                  : { background: "#fee2e2", color: "#b91c1c" }
+                              }
+                              disabled={deactivatingId === iv.user_id || (!getIsDeactivated(iv) && !canDeactivate(iv))}
+                              onClick={() => requestStatusChange(iv)}
+                            >
+                              {deactivatingId === iv.user_id ? "Saving…" : getIsDeactivated(iv) ? "Activate" : "Deactivate"}
+                            </button>
+                          )
                         ) : (
                           <span style={{ color: "#9ca3af" }}>—</span>
                         )}
@@ -810,6 +850,8 @@ export default function AdminInterviews() {
             </div>
           )}
         </div>
+          </>
+        )}
       </div>
 
       {/* ══ DETAIL MODAL ══ */}
@@ -1053,6 +1095,11 @@ export default function AdminInterviews() {
                     : "Deactivate Interviewer"}
                 </button>
               )}
+              {isInterviewerRole(selectedInterviewer) && getBlockedStatusMessage(selectedInterviewer, "deactivate") && (
+                <span style={{ color: "#9ca3af", fontSize: 12, lineHeight: 1.4 }}>
+                  Changing the status is not possible user have the active interview.
+                </span>
+              )}
               {isInterviewerRole(selectedInterviewer) &&
                 (getReviewStatus(selectedInterviewer) !== "active" || !hasActiveInterview(selectedInterviewer)) && (
                 <button
@@ -1071,6 +1118,11 @@ export default function AdminInterviews() {
                     ? "Move to Under Review"
                     : "Mark Review Active"}
                 </button>
+              )}
+              {isInterviewerRole(selectedInterviewer) && getBlockedStatusMessage(selectedInterviewer, "review") && (
+                <span style={{ color: "#9ca3af", fontSize: 12, lineHeight: 1.4 }}>
+                  {/* Changing the status is not possible user have the active interview. */}
+                </span>
               )}
               <button
                 className="btn"
