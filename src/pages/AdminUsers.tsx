@@ -31,6 +31,8 @@ type Interviewer = {
   is_interviewer_verified?: string | boolean;
   is_banned?: string | boolean;
   is_interviewer_banned?: string | boolean;
+  interviewer_deactivated_by?: string;
+  interviewer_deactivated_at?: string;
   review_status?: string;
   admin_review?: boolean;
   company_names?: string[];
@@ -119,8 +121,22 @@ export default function AdminInterviews() {
   };
 
   const getIsDeactivated = (iv: Interviewer): boolean => {
-    const value = iv.is_banned ?? iv.is_interviewer_banned;
+    const value = iv.is_interviewer_banned ?? iv.is_banned;
     return value === true || value === "true";
+  };
+
+  const getDeactivationLabel = (iv: Interviewer): string => {
+    if (!getIsDeactivated(iv)) return "Active";
+    const deactivatedBy = (iv.interviewer_deactivated_by ?? "").toLowerCase();
+    if (deactivatedBy === "user") return "Deactivated by interviewer";
+    if (deactivatedBy === "admin") return "Deactivated by admin";
+    return "Deactivated";
+  };
+
+  const getDeactivationTime = (iv: Interviewer): string | null => {
+    if (!iv.interviewer_deactivated_at) return null;
+    const timestamp = new Date(iv.interviewer_deactivated_at);
+    return Number.isNaN(timestamp.getTime()) ? iv.interviewer_deactivated_at : timestamp.toLocaleString();
   };
 
   const getReviewStatus = (iv: Interviewer): "active" | "under_review" =>
@@ -311,7 +327,7 @@ export default function AdminInterviews() {
     setDeactivatingId(iv.user_id);
     try {
       await banInterviewer(iv.user_id, deactivate);
-      await fetchAllUsers();
+      await Promise.all([fetchAllUsers(), fetchInterviewers()]);
       setStatusSuccessTarget({ iv, deactivated: deactivate });
       setSelectedInterviewer(null);
     } catch (err: any) {
@@ -666,6 +682,7 @@ export default function AdminInterviews() {
                     <th>Name</th>
                     <th>Email</th>
                     <th>Role</th>
+                    <th>Account Status</th>
                     <th>Companies</th>
                     <th>Education</th>
                     {activeTab !== "pending interviewers" && <th>User Type</th>}
@@ -702,6 +719,33 @@ export default function AdminInterviews() {
                       </td>
 
                       <td>
+                        {showAsInterviewer(iv) ? (
+                          <div>
+                            <span
+                              className="badge"
+                              style={{
+                                background: getIsDeactivated(iv) ? "#fee2e2" : "#d1fae5",
+                                color: getIsDeactivated(iv) ? "#b91c1c" : "#047857",
+                                fontSize: 12,
+                                fontWeight: 500,
+                                padding: "4px 8px",
+                                borderRadius: 4,
+                              }}
+                            >
+                              {getDeactivationLabel(iv)}
+                            </span>
+                            {getDeactivationTime(iv) && (
+                              <div style={{ color: "#6b7280", fontSize: 11, marginTop: 4 }}>
+                                {getDeactivationTime(iv)}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <span style={{ color: "#9ca3af" }}>—</span>
+                        )}
+                      </td>
+
+                      <td>
                         <NamePills
                           items={getCompanies(iv)}
                           max={2}
@@ -735,21 +779,6 @@ export default function AdminInterviews() {
                             >
                               {showAsInterviewer(iv) ? "Interviewer" : "Candidate"}
                             </span>
-                            {getIsDeactivated(iv) && (
-                              <span
-                                className="badge"
-                                style={{
-                                  background: "#fee2e2",
-                                  color: "#b91c1c",
-                                  fontSize: 12,
-                                  fontWeight: 500,
-                                  padding: "4px 8px",
-                                  borderRadius: 4,
-                                }}
-                              >
-                                Deactivated
-                              </span>
-                            )}
                           </div>
                         </td>
                       )}
@@ -908,9 +937,15 @@ export default function AdminInterviews() {
                               : { background: "#d1fae5", color: "#047857" }
                           }
                         >
-                          {getIsDeactivated(selectedInterviewer) ? "Deactivated" : "Active"}
+                          {getDeactivationLabel(selectedInterviewer)}
                         </span>
                       </span>
+                    </div>
+                  )}
+                  {isInterviewerRole(selectedInterviewer) && getDeactivationTime(selectedInterviewer) && (
+                    <div className="detail-item">
+                      <label>Deactivated At</label>
+                      <span>{getDeactivationTime(selectedInterviewer)}</span>
                     </div>
                   )}
                   {(selectedInterviewer as any).created_at && (

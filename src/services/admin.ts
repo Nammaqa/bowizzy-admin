@@ -101,7 +101,6 @@ export async function markInterviewerVerified(userId: number | string) {
 export async function banInterviewer(userId: number | string, isBanned: boolean) {
   const res = await api.patch(`/admin/interviewers/${userId}/ban`, {
     is_banned: isBanned,
-    candidate_id: userId,
   });
   return res.data;
 }
