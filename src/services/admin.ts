@@ -101,7 +101,17 @@ export async function markInterviewerVerified(userId: number | string) {
 export async function banInterviewer(userId: number | string, isBanned: boolean) {
   const res = await api.patch(`/admin/interviewers/${userId}/ban`, {
     is_banned: isBanned,
-    candidate_id: userId,
+  });
+  return res.data;
+}
+
+// Set an interviewer's review status (same endpoint toggles both directions)
+export async function updateInterviewerReviewStatus(
+  userId: number | string,
+  reviewStatus: "active" | "under_review"
+) {
+  const res = await api.patch(`/admin/interviewers/${userId}/review-status`, {
+    review_status: reviewStatus,
   });
   return res.data;
 }
@@ -146,4 +156,5 @@ export async function deletePricing(id: number | string) {
   const res = await api.delete(`/admin/pricing/${id}`);
   return res.data;
 }
-export default { getInterviewers, getUsers, updateUser, confirmInterviewer, getResumes, setAuthToken, loginAdmin, authLogin, logout, getPendingInterviewers, markInterviewerVerified, banInterviewer, getAcceptedInterviews, getPriorityInterviews, getAllInterviews };
+export default { getInterviewers, getUsers, updateUser, confirmInterviewer, getResumes, setAuthToken, loginAdmin, authLogin, logout, getPendingInterviewers, markInterviewerVerified, banInterviewer, updateInterviewerReviewStatus, getAcceptedInterviews, getPriorityInterviews, getAllInterviews };
+//.
